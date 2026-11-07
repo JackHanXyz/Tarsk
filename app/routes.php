@@ -12,13 +12,16 @@ return [
     ['POST', '/logout', 'auth.php', 'logout'],
 
     ['GET', '/sites', 'sites.php', 'sites_page'],
+    ['GET', '/sites/(\d+)', 'sites.php', 'sites_show'],
     ['POST', '/sites/create', 'sites.php', 'sites_create'],
+    ['POST', '/sites/(\d+)/update', 'sites.php', 'sites_update'],
     ['POST', '/sites/(\d+)/toggle', 'sites.php', 'sites_toggle'],
     ['POST', '/sites/(\d+)/delete', 'sites.php', 'sites_delete'],
 
     ['GET', '/files', 'files.php', 'files_page'],
     ['GET', '/files/read', 'files.php', 'files_read'],
     ['POST', '/files/mkdir', 'files.php', 'files_mkdir'],
+    ['POST', '/files/create', 'files.php', 'files_create'],
     ['POST', '/files/save', 'files.php', 'files_save'],
     ['POST', '/files/rename', 'files.php', 'files_rename'],
     ['POST', '/files/delete', 'files.php', 'files_delete'],
@@ -56,6 +59,15 @@ return [
     ['GET', '/store', 'store.php', 'store_page'],
     ['POST', '/store/install', 'store.php', 'store_install'],
     ['POST', '/store/check', 'store.php', 'store_check'],
+    ['POST', '/store/install-managed', 'store.php', 'store_managed_install'],
+    ['POST', '/store/managed-action', 'store.php', 'store_managed_action'],
+    ['GET', '/store/log', 'store.php', 'store_log_api'],
+
+    ['GET', '/terminal', 'terminal.php', 'terminal_page'],
+    ['POST', '/terminal/run', 'terminal.php', 'terminal_run'],
+
+    ['GET', '/processes', 'processes.php', 'processes_page'],
+    ['POST', '/processes/kill', 'processes.php', 'processes_kill'],
 
     ['GET', '/logs', 'logs.php', 'logs_page'],
 

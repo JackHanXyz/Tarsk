@@ -11,6 +11,7 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
   </div>
   <div class="toolbar">
     <button class="btn btn--ghost btn--sm" data-open="mkdirDialog"><?= icon('folder', 14) ?>新建目录</button>
+    <button class="btn btn--ghost btn--sm" data-open="fileCreateDialog"><?= icon('plus', 14) ?>新建文件</button>
     <button class="btn btn--ghost btn--sm" data-trigger="fileUploadInput"><?= icon('upload', 14) ?>上传文件</button>
     <a class="btn btn--ghost btn--sm" href="<?= url('/files?path=' . urlencode($rel)) ?>"><?= icon('refresh', 14) ?>刷新</a>
   </div>
@@ -142,6 +143,28 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
     </div>
     <div class="modal__foot">
       <button class="btn btn--ghost" type="button" data-close="mkdirDialog">取消</button>
+      <button class="btn btn--primary" type="submit">创建</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="fileCreateDialog">
+  <form method="post" action="<?= url('/files/create') ?>">
+    <?= csrf_field() ?>
+    <input type="hidden" name="path" value="<?= e($rel) ?>">
+    <div class="modal__head">
+      <h3>新建文件</h3>
+      <button class="icon-btn" type="button" data-close="fileCreateDialog"><?= icon('x', 14) ?></button>
+    </div>
+    <div class="modal__body">
+      <div class="field">
+        <label>文件名称</label>
+        <input class="input" type="text" name="name" placeholder="index.php" required autofocus>
+        <span class="hint">创建后可在文件列表中点击文件名编辑内容。</span>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close="fileCreateDialog">取消</button>
       <button class="btn btn--primary" type="submit">创建</button>
     </div>
   </form>

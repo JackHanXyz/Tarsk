@@ -91,10 +91,16 @@ function files_save(): void
     $rel = (string)($_POST['path'] ?? '');
     $content = (string)($_POST['content'] ?? '');
     $full = files_resolve($rel);
+
     if ($full === null || !is_file($full)) {
-        flash('error', '文件不存在');
-        redirect('/files?path=' . urlencode(dirname($rel)));
+        // 允许在已存在的目录内新建文件
+        $full = files_resolve($rel, false);
+        if ($full === null || !is_dir(dirname($full))) {
+            flash('error', '文件路径不存在或不在站点目录内');
+            redirect('/files');
+        }
     }
+
     if (@file_put_contents($full, $content) === false) {
         flash('error', '写入失败，请检查文件权限');
     } else {
@@ -102,6 +108,31 @@ function files_save(): void
         flash('success', '已保存 ' . basename($full));
     }
     redirect('/files?path=' . urlencode(dirname($rel)));
+}
+
+function files_create(): void
+{
+    $dir = (string)($_POST['path'] ?? '');
+    $name = trim((string)($_POST['name'] ?? ''));
+    $parent = files_resolve($dir);
+    if ($parent === null || !is_dir($parent)) {
+        flash('error', '目录不存在');
+        redirect('/files');
+    }
+    if (!preg_match('/^[^\\\\\\/:*?"<>|]{1,120}$/', $name)) {
+        flash('error', '文件名称包含非法字符');
+        redirect('/files?path=' . urlencode($dir));
+    }
+    $target = $parent . '/' . $name;
+    if (file_exists($target)) {
+        flash('error', '同名文件或目录已存在');
+    } elseif (@file_put_contents($target, '') === false) {
+        flash('error', '创建失败，请检查权限');
+    } else {
+        log_action('新建文件', $name);
+        flash('success', '文件 ' . $name . ' 已创建');
+    }
+    redirect('/files?path=' . urlencode($dir));
 }
 
 function files_mkdir(): void

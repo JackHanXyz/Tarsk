@@ -109,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$installed) {
                     'name' => 'Tarsk',
                     'base_url' => '',
                     'debug' => true,
-                    'version' => '1.0.0',
+                    'version' => '1.3.0',
                     'timezone' => 'Asia/Shanghai',
                 ],
                 'system' => [
@@ -142,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$installed) {
     }
 }
 
-$panelVersion = '1.0.0';
+$panelVersion = '1.3.0';
 ?>
 <!doctype html>
 <html lang="zh-CN">

@@ -28,6 +28,7 @@ function dashboard_page(): void
         'services' => $services,
         'mysql' => $mysql,
         'docker' => $docker,
+        'runtime' => runtime_states(),
         'counts' => ['sites' => $siteCount, 'databases' => $dbCount, 'cron' => $cronCount],
         'logs' => $logs,
         'sites' => $sites,

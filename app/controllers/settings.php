@@ -56,6 +56,9 @@ function settings_save(): void
         'mysql_admin_user' => fn($v) => trim($v),
         'mysql_admin_pass' => fn($v) => trim($v),
         'login_notice' => fn($v) => mb_substr(trim($v), 0, 200),
+        'nginx_port' => fn($v) => max(1, min(65535, (int)$v)),
+        'php_port' => fn($v) => max(1, min(65535, (int)$v)),
+        'redis_port' => fn($v) => max(1, min(65535, (int)$v)),
     ];
     foreach ($fields as $key => $sanitize) {
         if (array_key_exists($key, $_POST)) {

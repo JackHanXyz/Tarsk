@@ -17,8 +17,7 @@
     setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .25s'; setTimeout(function () { el.remove(); }, 260); }, 3200);
   }
 
-  /* ------------------------------- 主题 / 侧栏 ------------------------------- */
-  var THEME_KEY = 'tarsk-theme';
+  /* ------------------------------- 图表配色 ------------------------------- */
   var redrawers = [];
 
   function chartPalette() {
@@ -28,25 +27,10 @@
       return value || fallback;
     };
     return [
-      pick('--chart-1', '#0f766e'),
-      pick('--chart-2', '#c2760a'),
-      pick('--chart-3', '#3b6ea5')
+      pick('--chart-1', '#2563eb'),
+      pick('--chart-2', '#7c3aed'),
+      pick('--chart-3', '#0e9f6e')
     ];
-  }
-
-  var themeToggle = $('[data-theme-toggle]');
-  if (themeToggle) {
-    themeToggle.addEventListener('click', function () {
-      var root = document.documentElement;
-      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      if (next === 'dark') {
-        root.setAttribute('data-theme', 'dark');
-      } else {
-        root.removeAttribute('data-theme');
-      }
-      try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* 忽略存储异常 */ }
-      redrawers.forEach(function (redraw) { redraw(); });
-    });
   }
 
   var appShell = $('#app');
@@ -140,6 +124,99 @@
   $$('form[data-confirm]').forEach(function (form) {
     form.addEventListener('submit', function (event) {
       if (!window.confirm(form.getAttribute('data-confirm'))) { event.preventDefault(); }
+    });
+  });
+
+  $$('form[data-busy]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      if (event.defaultPrevented) { return; }
+      var button = form.querySelector('button[type="submit"]');
+      if (!button) { return; }
+      button.disabled = true;
+      button.textContent = form.getAttribute('data-busy') || '处理中…';
+      toast(form.getAttribute('data-busy') || '处理中…');
+    });
+  });
+
+  /* ------------------------------- Web 终端 ------------------------------- */
+  var terminalForm = $('#terminalForm');
+  if (terminalForm) {
+    var termScreen = $('#terminalScreen');
+    var termInput = $('#terminalCommand');
+    var termSubmit = $('#terminalSubmit');
+
+    var appendTermEntry = function (entry) {
+      var wrap = document.createElement('div');
+      wrap.className = 'term-entry';
+
+      var line = document.createElement('div');
+      line.className = 'term-line term-cmd';
+      var prompt = document.createElement('span');
+      prompt.className = 'term-prompt';
+      prompt.textContent = '$';
+      line.appendChild(prompt);
+      line.appendChild(document.createTextNode(entry.command));
+      var meta = document.createElement('span');
+      meta.className = 'term-meta';
+      meta.textContent = entry.time + ' · ' + entry.duration + 's · exit ' + entry.code;
+      line.appendChild(meta);
+
+      var out = document.createElement('pre');
+      out.className = 'term-out';
+      out.textContent = entry.output;
+
+      wrap.appendChild(line);
+      wrap.appendChild(out);
+      termScreen.appendChild(wrap);
+    };
+
+    terminalForm.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var command = termInput.value.trim();
+      if (command === '') { return; }
+
+      termSubmit.disabled = true;
+      var payload = new FormData(terminalForm);
+      payload.set('command', command);
+
+      fetch('/terminal/run', { method: 'POST', body: payload })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (!data.ok) { toast(data.message || '执行失败', 'error'); return; }
+          appendTermEntry(data.entry);
+          termInput.value = '';
+          termScreen.scrollTop = termScreen.scrollHeight;
+        })
+        .catch(function () { toast('终端请求失败，请重试', 'error'); })
+        .finally(function () { termSubmit.disabled = false; termInput.focus(); });
+    });
+
+    $$('[data-term-fill]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        termInput.value = button.getAttribute('data-term-fill');
+        termInput.focus();
+      });
+    });
+  }
+
+  /* ------------------------------- 软件日志 ------------------------------- */
+  $$('[data-store-log]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var key = button.getAttribute('data-store-log');
+      var name = button.getAttribute('data-store-name') || key;
+      $('#storeLogTitle').textContent = name + ' 运行日志';
+      $('#storeLogTail').textContent = '加载中…';
+      $('#storeLogPath').textContent = '';
+      openDialog('storeLogDialog');
+
+      fetch('/store/log?key=' + encodeURIComponent(key))
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (!data.ok) { $('#storeLogTail').textContent = data.message || '读取失败'; return; }
+          $('#storeLogTail').textContent = data.tail || '日志为空（服务可能尚未产生输出）';
+          $('#storeLogPath').textContent = (data.running ? '运行中' : '未运行') + ' · ' + (data.path || '');
+        })
+        .catch(function () { $('#storeLogTail').textContent = '读取日志失败'; });
     });
   });
 

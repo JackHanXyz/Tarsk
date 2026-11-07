@@ -7,6 +7,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/system.php';
+require_once __DIR__ . '/runtime.php';
+require_once __DIR__ . '/site_vhost.php';
 
 date_default_timezone_set((string)(config('app.timezone') ?: 'Asia/Shanghai'));
 

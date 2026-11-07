@@ -427,6 +427,10 @@ function find_mysql_bin(): string
 
 function find_nginx_bin(): string
 {
+    $managed = storage_path('soft/nginx/nginx.exe');
+    if (is_file($managed)) {
+        return str_replace('\\', '/', $managed);
+    }
     $configured = (string)config('system.nginx_bin', '');
     if ($configured !== '' && is_file($configured)) {
         return $configured;
@@ -439,8 +443,22 @@ function find_nginx_bin(): string
     return '';
 }
 
+function find_nginx_root(): string
+{
+    $bin = find_nginx_bin();
+    return $bin !== '' ? str_replace('\\', '/', dirname($bin)) : '';
+}
+
 function nginx_vhost_dir(): string
 {
+    if (function_exists('managed_nginx_installed') && managed_nginx_installed()) {
+        $managed = storage_path('soft/nginx/conf/vhosts');
+        if (!is_dir($managed)) {
+            @mkdir($managed, 0777, true);
+        }
+        return $managed;
+    }
+
     $configured = (string)config('system.nginx_conf', '');
     if ($configured !== '') {
         return rtrim($configured, '/\\');

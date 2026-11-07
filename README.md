@@ -1,38 +1,90 @@
-# Tarsk · 轻量服务器运维面板
+# Tarsk · 服务器运维面板
 
-Tarsk 是一个以 PHP + MySQL 编写的服务器运维面板，复刻宝塔面板的核心使用方式：站点、文件、数据库、监控、计划任务、防火墙、Docker、SSL 与软件商店集中在一个后台中。
+Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔面板的核心功能做完整复刻：一键安装、运行环境托管、站点、文件、数据库、监控、计划任务、防火墙、Docker、SSL、软件商店、Web 终端与进程管理。
 
-## 特性
+## 功能
 
-- **真实系统操作**：文件读写、站点目录创建、Nginx vhost 生成、数据库创建/备份、`schtasks` 计划任务、`New-NetFirewallRule` 防火墙规则、Docker CLI 管理与 OpenSSL 证书签发。
-- **真实指标采集**：Windows 通过 CIM/PowerShell 采集 CPU、内存、磁盘与网卡累计流量；Linux 读取 `/proc` 与 `disk_*_space`。
-- **跨平台适配**：Windows 调试优先，Linux 提供等价实现（crontab、ufw、systemctl）。
-- **零第三方依赖**：无 Composer，纯原生 PHP 模板与原生 CSS/JS，离线可用。
-- **安全基线**：会话 Cookie HttpOnly + SameSite、全站 CSRF Token、路径穿越防护、操作日志。
+### 安装与运行环境
+- **Windows 一键安装**：`install.ps1` 自动检查 PHP 扩展、初始化数据库、生成管理员、注册登录自启任务并启动面板。
+- **Linux 一键安装**：`install.sh` 生成 systemd 服务并启动。
+- **托管运行环境**：在软件商店内真实下载、解压、配置、启动、停止、重启、卸载 **Nginx / PHP-CGI / Redis**，安装到 `storage/soft`，不污染系统目录，无需管理员权限。
+- **端口隔离**：托管 Nginx 默认 `8080`、PHP-CGI `9000`、Redis `6380`，与系统已有服务并存。
+
+### 站点
+- 一键创建运行目录、默认首页、Nginx vhost，可选 **同时创建 MySQL 数据库**。
+- **伪静态预设**：WordPress / Laravel / ThinkPHP / Discuz! / DedeCMS。
+- 站点详情页：修改域名、PHP 版本、伪静态、状态，实时预览 vhost、查看访问日志、关联数据库与证书。
+- 托管模式下保存即自动 `nginx -s reload`。
+
+### 运维
+- **文件管理**：浏览、新建目录/文件、在线编辑、上传、下载、重命名、删除，路径穿越防护。
+- **数据库**：浏览库表、创建/删除数据库、mysqldump 备份、导入 root 账号解锁完整权限。
+- **监控**：真实 CPU / 内存 / 磁盘 / 网卡采样，30 秒入库，24 小时曲线。
+- **计划任务**：Windows `schtasks` / Linux `crontab` 注册、启停、立即执行。
+- **防火墙**：读取系统配置，写入/移除 Tarsk 规则（需管理员权限）。
+- **Docker**：容器/镜像列表、启停、重启、删除、`docker run`。
+- **SSL**：OpenSSL 自签证书（含 SAN）、PEM 导入、到期提醒、自动写入 HTTPS vhost。
+- **Web 终端**：面板内真实执行系统命令，带会话历史与操作日志。
+- **进程管理**：按内存排序查看进程，按 PID 结束。
+- **软件商店**：托管环境安装管理 + 系统软件探测 / winget 静默安装。
+- **明暗双主题**、移动端抽屉导航、操作日志审计。
 
 ## 环境要求
 
-- PHP 8.1+（需要 `pdo_mysql`、`openssl`、`mbstring` 扩展）
-- MySQL 5.6+（面板自身数据使用 `tarsk_` 表前缀）
-- 可选：Nginx、MySQL 客户端、Docker、winget（用于软件商店安装）
+- PHP 8.1+（`pdo_mysql`、`openssl`、`mbstring`，建议开启 `proc_open`）
+- MySQL 5.6+（面板数据使用 `tarsk_` 前缀）
+- Windows 10/11 或主流 Linux 发行版
+- 可选：Nginx、MySQL 客户端、Docker、winget
 
-## 快速开始
+## 安装
 
-```bash
-# 1. 准备配置
-cp config.example.php config.php
-# 编辑 config.php 填写数据库连接信息
+### Windows 一键安装
 
-# 2. 初始化数据表与管理员
-php bin/install.php admin YourPassword123
-
-# 3. 启动
-php -S 127.0.0.1:8888 -t public public/router.php
+```powershell
+# 在项目根目录执行
+.\install.ps1 -DbUser root -DbPass "你的MySQL密码" -AdminPass "至少8位密码"
 ```
 
-访问 `http://127.0.0.1:8888`，使用初始化时创建的管理员账号登录。
+脚本会：检查 PHP 与扩展 → 写入 `config.php` → 建库/建表 → 创建管理员 → 注册 `Tarsk_Panel` 登录自启任务 → 启动面板并打开浏览器。
 
-也可以直接访问 `/install` 使用网页安装向导（会自动尝试建库，若无权限则回落到 `test` 库）。
+常用参数：`-DbHost`、`-DbPort`、`-DbName`、`-PanelPort`、`-NoTask`、`-Force`。
+
+### Linux 一键安装
+
+```bash
+sudo ./install.sh --db-user root --db-pass "密码" --admin-pass "你的密码" --port 8888
+```
+
+以 root 运行时会写入 `/etc/systemd/system/tarsk.service` 并 `enable --now`。
+
+### 网页安装向导
+
+启动 PHP 内置服务器后访问 `/install`：
+
+```bash
+php -S 0.0.0.0:8888 -t public public/router.php
+```
+
+访问 `http://服务器IP:8888/install`，按向导填写数据库与管理员信息。若数据库账号没有建库权限，面板会自动回落到 `test` 库保证可用。
+
+### 手动初始化
+
+```bash
+cp config.example.php config.php
+# 编辑数据库连接
+php bin/configure.php --host=127.0.0.1 --name=tarsk --user=root --pass=secret \
+  --admin=admin --admin-pass=YourPassword --panel-port=8888
+php -S 0.0.0.0:8888 -t public public/router.php
+```
+
+## 使用流程
+
+1. 登录面板（默认端口 8888）。
+2. 进入「软件商店」安装 Nginx 与 PHP（可选 Redis），启动它们。
+3. 进入「网站」新建站点，绑定域名、选择伪静态，可选同时建库。
+4. 托管 Nginx 通过 `http://服务器:8080` + `Host` 头访问站点；也可在设置中修改端口与系统 Nginx 共存。
+5. 在「SSL 证书」签发或导入证书，站点配置自动启用 HTTPS。
+6. 使用「Web 终端」「进程管理」「计划任务」「监控」完成日常运维。
 
 ## 目录结构
 
@@ -40,37 +92,42 @@ php -S 127.0.0.1:8888 -t public public/router.php
 Tarsk/
 ├── app/
 │   ├── bootstrap.php       配置、会话、鉴权、模板、日志
-│   ├── db.php              PDO、表结构、种子数据
-│   ├── system.php          跨平台系统适配（指标/服务/软件/防火墙/Docker/MySQL）
+│   ├── db.php              PDO、表结构、增量迁移、种子数据
+│   ├── system.php          跨平台系统指标/服务/软件/防火墙/Docker/MySQL
+│   ├── runtime.php         Nginx / PHP / Redis 下载安装与进程管理
+│   ├── site_vhost.php      站点 vhost 生成、伪静态、日志、同步
 │   ├── routes.php          路由表
 │   ├── controllers/        各功能控制器
 │   └── views/              页面模板与布局
 ├── bin/
-│   ├── install.php         CLI 初始化
+│   ├── configure.php       命令行配置 + 初始化
+│   ├── install.php         CLI 初始化（使用已有 config）
 │   └── reset-password.php  重置管理员密码
 ├── public/
 │   ├── index.php           入口
 │   ├── install.php         网页安装向导
 │   ├── router.php          PHP 内置服务器路由
 │   └── assets/             设计系统样式与脚本
-├── storage/                缓存、证书、备份、日志（运行时生成）
-└── config.php              配置（安装时生成）
+├── storage/                缓存、日志、证书、软件安装目录（运行时生成，已忽略）
+├── install.ps1             Windows 一键安装
+├── install.sh              Linux 一键安装
+└── config.php              配置（安装时生成，已忽略）
 ```
 
-## 运行提示
+## 说明与限制
 
-- **数据库权限**：面板默认使用配置中的 MySQL 账号。若该账号没有 `CREATE DATABASE` 权限，数据库页只能浏览已有库；在「面板设置」中填入 root 账号即可启用完整管理能力。
-- **防火墙 / 计划任务**：写入系统规则或系统任务通常需要管理员权限，失败原因会直接显示在列表中。
-- **Nginx 生效**：站点配置写入 `D:/BtSoft/nginx/conf/vhost`（可配置），修改后执行 `nginx -s reload` 生效。
-- **Docker**：需要 Docker Desktop / Docker Engine 处于运行状态。
-- **执行权限**：面板会调用 `proc_open` 执行系统命令，部署时请确保该函数未被 `disable_functions` 禁用。
+- **数据库权限**：面板默认使用 `config.php` 中的 MySQL 账号。该账号若无 `CREATE DATABASE` 权限，数据库页只能浏览已有库；在「面板设置」中填写 root 账号即可解锁完整管理。
+- **托管运行环境**：完整能力当前在 Windows 上实现（官方 ZIP + php-cgi + Redis for Windows）。Linux 端可继续使用系统包管理器，面板会探测并管理已有服务。
+- **Nginx 配置隔离**：安装托管 Nginx 后，Tarsk 站点配置写入 `storage/soft/nginx/conf/vhosts`，运行在独立端口，不影响系统 Nginx；卸载时自动把站点配置同步回原 Nginx 目录。
+- **系统级操作**：防火墙写入、结束进程、终端命令等依赖运行账号权限，失败原因会显示在界面并写入日志。
+- **执行函数**：面板通过 `proc_open` 执行命令，部署时请勿禁用该函数。
 
 ## 安全建议
 
-1. 生产环境请将 `config.php` 中 `app.debug` 置为 `false`。
-2. 面板仅建议绑定内网或通过反向代理/HTTPS 暴露，不要直接对公网开放。
-3. 定期在「操作日志」审阅高风险操作，并为面板配置强密码。
-4. 面板以运行它的操作系统账号权限执行命令，请勿使用超级管理员以外的过高权限运行。
+1. 生产环境将 `config.php` 中 `app.debug` 设为 `false`。
+2. 面板仅绑定内网或置于 HTTPS 反向代理后，避免直接暴露公网。
+3. 定期审阅「操作日志」，为面板设置强密码。
+4. 终端与软件安装具有系统权限，请仅在可信环境使用。
 
 ## License
 

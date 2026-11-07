@@ -15,15 +15,28 @@ declare(strict_types=1);
 <div class="card">
   <div class="card__head">
     <span class="card__title"><?= icon('globe', 17) ?>运行环境</span>
-    <span class="badge <?= $nginx_bin ? 'badge--ok' : 'badge--warn' ?>"><i></i><?= $nginx_bin ? 'Nginx 已就绪' : '未检测到 Nginx' ?></span>
+    <div class="toolbar">
+      <?php if ($nginx_managed): ?>
+        <span class="badge <?= $nginx_running ? 'badge--ok' : 'badge--warn' ?>"><i></i>Tarsk 托管 Nginx · 端口 <?= (int)$web_port ?></span>
+      <?php else: ?>
+        <span class="badge <?= $nginx_bin ? 'badge--ok' : 'badge--warn' ?>"><i></i><?= $nginx_bin ? '系统 Nginx' : '未检测到 Nginx' ?></span>
+        <a class="btn btn--soft btn--sm" href="<?= url('/store') ?>"><?= icon('download', 13) ?>安装托管环境</a>
+      <?php endif; ?>
+    </div>
   </div>
   <div class="card__body">
     <dl class="kv">
       <dt>站点根目录</dt><dd class="mono"><?= e($sites_root) ?></dd>
       <dt>Nginx 配置</dt><dd class="mono"><?= e($nginx_conf) ?></dd>
       <dt>Nginx 程序</dt><dd class="mono"><?= e($nginx_bin ?: '未检测到，配置文件仍会生成') ?></dd>
-      <dt>PHP 版本</dt>
+      <dt>访问端口</dt><dd class="mono"><?= (int)$web_port ?> <?= $nginx_managed ? '（托管模式）' : '' ?></dd>
+      <dt>PHP 环境</dt>
       <dd>
+        <?php if ($php_managed): ?>
+          <span class="badge <?= $php_managed['running'] ? 'badge--ok' : 'badge--warn' ?>" style="margin-right:6px">
+            Tarsk 托管 PHP · <?= (int)$php_managed['port'] ?> · <?= $php_managed['running'] ? '运行中' : '未启动' ?>
+          </span>
+        <?php endif; ?>
         <?php foreach ($php_versions as $ver): ?>
           <span class="badge badge--muted" style="margin-right:4px"><?= e($ver['version']) ?></span>
         <?php endforeach; ?>
@@ -65,7 +78,7 @@ declare(strict_types=1);
           <?php foreach ($sites as $site): ?>
             <tr data-search="<?= e(strtolower($site['name'] . ' ' . $site['domain'])) ?>">
               <td>
-                <div class="cell-main"><?= e($site['name']) ?></div>
+                <div class="cell-main"><a href="<?= url('/sites/' . (int)$site['id']) ?>"><?= e($site['name']) ?></a></div>
                 <div class="cell-sub"><?= e(ago($site['created_at'])) ?>创建 · <?= bytes($site['size']) ?></div>
               </td>
               <td>
@@ -92,6 +105,7 @@ declare(strict_types=1);
               </td>
               <td>
                 <div class="td-actions">
+                  <a class="icon-btn" href="<?= url('/sites/' . (int)$site['id']) ?>" title="站点设置"><?= icon('settings', 14) ?></a>
                   <a class="icon-btn" href="<?= url('/files?path=' . urlencode($site['name'])) ?>" title="浏览文件"><?= icon('folder', 14) ?></a>
                   <form method="post" action="<?= url('/sites/' . (int)$site['id'] . '/toggle') ?>">
                     <?= csrf_field() ?>
@@ -146,14 +160,30 @@ declare(strict_types=1);
           </select>
         </div>
         <div class="field">
-          <label>监听端口</label>
-          <input class="input" type="number" name="port" value="80" min="1" max="65535">
+          <label>伪静态</label>
+          <select class="input" name="rewrite">
+            <?php foreach ($rewrite_presets as $value => $label): ?>
+              <option value="<?= e($value) ?>"><?= e($label) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="hint">可在站点设置中随时切换</span>
         </div>
         <div class="field span-2">
           <label>备注</label>
           <input class="input" type="text" name="remark" placeholder="可选，例如：博客主站">
         </div>
+        <div class="field span-2">
+          <label class="checkbox">
+            <input type="checkbox" name="create_db" value="1">
+            同时创建 MySQL 数据库
+          </label>
+        </div>
+        <div class="field span-2">
+          <label>数据库名称</label>
+          <input class="input mono" type="text" name="db_name" placeholder="留空则使用站点名称，非法字符会自动替换为下划线">
+        </div>
       </div>
+      <p class="small muted mt-12">站点将监听当前 Web 端口 <?= (int)$web_port ?><?= $nginx_managed ? '（Tarsk 托管 Nginx）' : '' ?>。</p>
     </div>
     <div class="modal__foot">
       <button class="btn btn--ghost" type="button" data-close="siteCreate">取消</button>

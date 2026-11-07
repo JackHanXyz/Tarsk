@@ -2,8 +2,9 @@
 declare(strict_types=1);
 
 /**
- * 网站管理
+ * 网站管理（目录、Nginx 托管、伪静态、建站建库）
  */
+
 function sites_page(): void
 {
     $sites = fetch_all('SELECT * FROM ' . t('sites') . ' ORDER BY id DESC');
@@ -11,6 +12,7 @@ function sites_page(): void
         $site['exists'] = is_dir((string)$site['path']);
         $site['size'] = $site['exists'] ? dir_size((string)$site['path']) : 0;
         $site['conf'] = site_conf_path((string)$site['name']);
+        $site['effective_port'] = site_effective_port($site);
     }
     unset($site);
 
@@ -21,7 +23,57 @@ function sites_page(): void
         'sites_root' => sites_root(),
         'nginx_bin' => find_nginx_bin(),
         'nginx_conf' => nginx_vhost_dir(),
+        'nginx_managed' => managed_nginx_installed(),
+        'nginx_running' => managed_nginx_installed() && runtime_state('nginx')['running'],
+        'web_port' => active_web_port(),
         'php_versions' => php_versions(),
+        'php_managed' => managed_php_installed() ? runtime_state('php') : null,
+        'rewrite_presets' => site_rewrite_presets(),
+    ], 'app');
+}
+
+function sites_show(int $id): void
+{
+    $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
+    if (!$site) {
+        flash('error', '站点不存在');
+        redirect('/sites');
+    }
+
+    $conf = site_conf_path((string)$site['name']);
+    $vhost = is_file($conf) ? (string)@file_get_contents($conf) : '';
+    $logPath = site_log_path($site);
+    $logTail = '';
+    if ($logPath !== '' && is_file($logPath)) {
+        $size = (int)filesize($logPath);
+        $handle = fopen($logPath, 'rb');
+        if ($handle) {
+            fseek($handle, max(0, $size - 60000));
+            $logTail = trim((string)fread($handle, 60000));
+            fclose($handle);
+        }
+        $rows = preg_split('/\r?\n/', $logTail);
+        $logTail = implode("\n", array_slice($rows, -30));
+    }
+
+    $certs = fetch_all('SELECT * FROM ' . t('certs') . ' WHERE site_id = ? ORDER BY id DESC', [$id]);
+    $databases = fetch_all('SELECT * FROM ' . t('databases') . ' WHERE site_id = ? ORDER BY id DESC', [$id]);
+
+    render('site_detail', [
+        'title' => '站点 · ' . $site['name'],
+        'active' => 'sites',
+        'site' => $site,
+        'vhost' => $vhost,
+        'conf_path' => $conf,
+        'log_path' => $logPath,
+        'log_tail' => $logTail,
+        'certs' => $certs,
+        'databases' => $databases,
+        'effective_port' => site_effective_port($site),
+        'rewrite_presets' => site_rewrite_presets(),
+        'php_versions' => php_versions(),
+        'nginx_managed' => managed_nginx_installed(),
+        'nginx_running' => managed_nginx_installed() && runtime_state('nginx')['running'],
     ], 'app');
 }
 
@@ -30,8 +82,10 @@ function sites_create(): void
     $name = trim((string)($_POST['name'] ?? ''));
     $domain = trim((string)($_POST['domain'] ?? ''));
     $php = trim((string)($_POST['php_version'] ?? ''));
-    $port = (int)($_POST['port'] ?? 80);
+    $rewrite = (string)($_POST['rewrite'] ?? '');
     $remark = trim((string)($_POST['remark'] ?? ''));
+    $createDb = !empty($_POST['create_db']);
+    $dbName = trim((string)($_POST['db_name'] ?? ''));
 
     if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/', $name)) {
         flash('error', '站点名称仅支持字母、数字、点、下划线与短横线');
@@ -41,8 +95,8 @@ function sites_create(): void
         flash('error', '站点名称已存在');
         redirect('/sites');
     }
-    if ($port < 1 || $port > 65535) {
-        $port = 80;
+    if (!array_key_exists($rewrite, site_rewrite_presets())) {
+        $rewrite = '';
     }
 
     $root = sites_root();
@@ -57,19 +111,73 @@ function sites_create(): void
         @file_put_contents($path . '/index.html', site_welcome_html($name));
     }
 
+    $port = active_web_port();
     execute(
-        'INSERT INTO ' . t('sites') . ' (name, domain, path, php_version, port, ssl_enabled, status, remark, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?)',
-        [$name, $domain, $path, $php, $port, 0, 'running', $remark, now()]
+        'INSERT INTO ' . t('sites') . '
+         (name, domain, path, php_version, port, rewrite, ssl_enabled, status, remark, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [$name, $domain, $path, $php, $port, $rewrite, 0, 'running', $remark, now()]
     );
-    // 重新查询以取得插入后的完整记录
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE name = ?', [$name]);
 
+    $notes = [];
     $confResult = write_site_vhost($site);
-    log_action('创建站点', $name . ' · ' . ($domain ?: '未绑定域名'), 'info');
+    $notes[] = $confResult['message'];
 
-    flash($confResult['ok'] ? 'success' : 'warning', '站点目录已创建：' . $path . '；' . $confResult['message']);
-    redirect('/sites');
+    if ($createDb) {
+        $dbName = $dbName !== '' ? $dbName : $name;
+        $dbName = preg_replace('/[^A-Za-z0-9_]/', '_', $dbName);
+        if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', $dbName)) {
+            $notes[] = '数据库名称不合法，已跳过建库';
+        } else {
+            $result = mysql_create_database($dbName);
+            if ($result['ok']) {
+                execute(
+                    'INSERT INTO ' . t('databases') . ' (db_name, db_user, db_pass, site_id, remark, created_at) VALUES (?,?,?,?,?,?)',
+                    [$dbName, '', '', (int)$site['id'], '随站点创建', now()]
+                );
+                $notes[] = $result['message'];
+            } else {
+                $notes[] = '建库失败：' . $result['message'];
+            }
+        }
+    }
+
+    log_action('创建站点', $name . ' · ' . ($domain ?: '未绑定域名'));
+    flash($confResult['ok'] ? 'success' : 'warning', implode('；', $notes));
+    redirect('/sites/' . (int)$site['id']);
+}
+
+function sites_update(int $id): void
+{
+    $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
+    if (!$site) {
+        flash('error', '站点不存在');
+        redirect('/sites');
+    }
+
+    $domain = trim((string)($_POST['domain'] ?? ''));
+    $php = trim((string)($_POST['php_version'] ?? ''));
+    $rewrite = (string)($_POST['rewrite'] ?? '');
+    $remark = trim((string)($_POST['remark'] ?? ''));
+    $status = (string)($_POST['status'] ?? $site['status']);
+    if (!array_key_exists($rewrite, site_rewrite_presets())) {
+        $rewrite = '';
+    }
+    if (!in_array($status, ['running', 'stopped'], true)) {
+        $status = 'running';
+    }
+
+    execute(
+        'UPDATE ' . t('sites') . ' SET domain = ?, php_version = ?, rewrite = ?, remark = ?, status = ? WHERE id = ?',
+        [$domain, $php, $rewrite, $remark, $status, $id]
+    );
+    $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
+
+    $result = $status === 'running' ? write_site_vhost($site) : remove_site_vhost($site);
+    log_action('更新站点', (string)$site['name'], 'info');
+    flash($result['ok'] ? 'success' : 'warning', '站点配置已更新；' . $result['message']);
+    redirect('/sites/' . $id);
 }
 
 function sites_toggle(int $id): void
@@ -82,11 +190,7 @@ function sites_toggle(int $id): void
     $next = $site['status'] === 'running' ? 'stopped' : 'running';
     execute('UPDATE ' . t('sites') . ' SET status = ? WHERE id = ?', [$next, $id]);
 
-    if ($next === 'running') {
-        $result = write_site_vhost($site);
-    } else {
-        $result = remove_site_vhost($site);
-    }
+    $result = $next === 'running' ? write_site_vhost($site) : remove_site_vhost($site);
 
     log_action('切换站点状态', $site['name'] . ' -> ' . ($next === 'running' ? '运行' : '停止'), 'warning');
     flash($result['ok'] ? 'success' : 'warning', $result['message']);
@@ -115,105 +219,4 @@ function sites_delete(int $id): void
     log_action('删除站点', (string)$site['name'], 'danger');
     flash('success', '站点 ' . $site['name'] . ' 已删除');
     redirect('/sites');
-}
-
-/* ------------------------------- 内部方法 ------------------------------- */
-
-function site_conf_path(string $name): string
-{
-    return nginx_vhost_dir() . '/' . $name . '.conf';
-}
-
-function site_vhost_content(array $site): string
-{
-    $serverName = $site['domain'] !== '' ? $site['domain'] : $site['name'] . '.local';
-    $path = str_replace('\\', '/', (string)$site['path']);
-    $lines = [
-        '# 由 Tarsk 自动生成 · ' . date('Y-m-d H:i:s'),
-        'server {',
-        '    listen ' . (int)$site['port'] . ';',
-        '    server_name ' . $serverName . ';',
-        '    root "' . $path . '";',
-        '    index index.html index.htm index.php;',
-        '',
-        '    location / {',
-        '        try_files $uri $uri/ /index.html;',
-        '    }',
-        '',
-        '    location ~ \\.php$ {',
-        '        fastcgi_pass 127.0.0.1:9000;',
-        '        fastcgi_index index.php;',
-        '        include fastcgi_params;',
-        '        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;',
-        '    }',
-        '',
-        '    access_log logs/' . $site['name'] . '.log;',
-        '}',
-    ];
-
-    if (!empty($site['ssl_enabled'])) {
-        $cert = fetch_one(
-            'SELECT * FROM ' . t('certs') . ' WHERE site_id = ? ORDER BY id DESC LIMIT 1',
-            [$site['id']]
-        );
-        if ($cert && is_file((string)$cert['cert_path'])) {
-            $lines[] = '';
-            $lines[] = 'server {';
-            $lines[] = '    listen 443 ssl;';
-            $lines[] = '    server_name ' . $serverName . ';';
-            $lines[] = '    root "' . $path . '";';
-            $lines[] = '    index index.html index.htm index.php;';
-            $lines[] = '    ssl_certificate "' . str_replace('\\', '/', (string)$cert['cert_path']) . '";';
-            $lines[] = '    ssl_certificate_key "' . str_replace('\\', '/', (string)$cert['key_path']) . '";';
-            $lines[] = '    ssl_protocols TLSv1.2 TLSv1.3;';
-            $lines[] = '    location / { try_files $uri $uri/ /index.html; }';
-            $lines[] = '}';
-        }
-    }
-
-    $lines[] = '';
-    return implode("\n", $lines);
-}
-
-function write_site_vhost(array $site): array
-{
-    $conf = site_conf_path((string)$site['name']);
-    $dir = dirname($conf);
-    if (!is_dir($dir)) {
-        @mkdir($dir, 0777, true);
-    }
-    $written = @file_put_contents($conf, site_vhost_content($site));
-    if ($written === false) {
-        return ['ok' => false, 'message' => 'Nginx 配置写入失败：' . $conf];
-    }
-    $note = 'Nginx 配置已写入 ' . $conf;
-    if (find_nginx_bin() !== '' && service_running('nginx')) {
-        $note .= '，执行 nginx -s reload 后生效';
-    }
-    return ['ok' => true, 'message' => $note];
-}
-
-function remove_site_vhost(array $site): array
-{
-    $conf = site_conf_path((string)$site['name']);
-    if (is_file($conf)) {
-        @unlink($conf);
-        return ['ok' => true, 'message' => '已移除 Nginx 配置 ' . $conf];
-    }
-    return ['ok' => true, 'message' => '未发现 Nginx 配置，已跳过'];
-}
-
-function site_welcome_html(string $name): string
-{
-    return '<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
-<title>' . e($name) . ' · Tarsk</title>
-<style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f172a;color:#e2e8f0;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-.card{border:1px solid rgba(148,163,184,.25);background:rgba(30,41,59,.65);padding:48px 56px;border-radius:18px;text-align:center}
-h1{margin:0 0 12px;font-size:26px;letter-spacing:.5px}
-p{margin:0;color:#94a3b8;font-size:14px;line-height:1.8}
-span{color:#38bdf8}
-</style></head>
-<body><div class="card"><h1>' . e($name) . '</h1><p>站点已由 <span>Tarsk</span> 创建，替换 index.html 即可上线。</p></div></body></html>';
 }

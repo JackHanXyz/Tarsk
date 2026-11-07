@@ -9,9 +9,8 @@ $panelName = $panel_name ?? setting('panel_name', config('app.name', 'Tarsk'));
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($title ?? '登录') ?> · <?= e($panelName) ?></title>
-<script>(function(){try{if(localStorage.getItem('tarsk-theme')==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
 <link rel="stylesheet" href="<?= url('/assets/app.css') ?>?v=<?= e(config('app.version', '1.0.0')) ?>">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230f766e'/><text x='50' y='70' font-size='58' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>T</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232563eb'/><text x='50' y='70' font-size='58' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>T</text></svg>">
 </head>
 <body class="auth-body">
 <main class="auth">

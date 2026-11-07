@@ -113,6 +113,18 @@ $diskBarClass = $diskPct >= 85 ? 'bar__fill--danger' : ($diskPct >= 70 ? 'bar__f
         </div>
         <span class="small muted"><?= $docker['installed'] ? ($docker['running'] ? '已连接 · ' . e($docker['version']) : 'CLI 已安装，守护进程未就绪') : '未安装' ?></span>
       </div>
+
+      <?php foreach ($runtime as $state): ?>
+        <div class="service-row">
+          <div class="svc">
+            <span class="dot <?= $state['running'] ? 'dot--ok' : ($state['installed'] ? 'dot--warn' : 'dot--off') ?>"></span>
+            <strong>托管 <?= e($state['name']) ?></strong>
+          </div>
+          <span class="small muted">
+            <?= $state['installed'] ? ($state['running'] ? '运行中 · 端口 ' . (int)$state['port'] : '已安装 · 未启动') : '未安装' ?>
+          </span>
+        </div>
+      <?php endforeach; ?>
     </div>
   </article>
 </section>

@@ -21,6 +21,8 @@ $navGroups = [
         ['key' => 'store', 'label' => '软件商店', 'url' => '/store', 'icon' => 'bag'],
     ],
     '系统' => [
+        ['key' => 'terminal', 'label' => 'Web 终端', 'url' => '/terminal', 'icon' => 'terminal'],
+        ['key' => 'processes', 'label' => '进程管理', 'url' => '/processes', 'icon' => 'cpu'],
         ['key' => 'logs', 'label' => '操作日志', 'url' => '/logs', 'icon' => 'list'],
         ['key' => 'settings', 'label' => '面板设置', 'url' => '/settings', 'icon' => 'settings'],
     ],
@@ -32,9 +34,8 @@ $navGroups = [
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($title) ?> · <?= e($panelName) ?></title>
-<script>(function(){try{if(localStorage.getItem('tarsk-theme')==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
 <link rel="stylesheet" href="<?= url('/assets/app.css') ?>?v=<?= e(config('app.version', '1.0.0')) ?>">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230f766e'/><text x='50' y='70' font-size='58' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>T</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232563eb'/><text x='50' y='70' font-size='58' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>T</text></svg>">
 </head>
 <body>
 <div class="app" id="app">
@@ -43,7 +44,7 @@ $navGroups = [
       <span class="brand__mark">T</span>
       <span class="brand__text">
         <strong><?= e($panelName) ?></strong>
-        <small>Control Plane</small>
+        <small>Server Panel v<?= e(config('app.version', '1.0.0')) ?></small>
       </span>
     </a>
 
@@ -89,13 +90,9 @@ $navGroups = [
         </div>
       </div>
       <div class="topbar__right">
-        <button class="theme-toggle" type="button" data-theme-toggle title="切换明暗主题" aria-label="切换明暗主题">
-          <span data-theme-icon="sun"><?= icon('sun', 14) ?></span>
-          <span data-theme-icon="moon"><?= icon('moon', 14) ?></span>
-        </button>
         <a class="btn btn--ghost btn--sm" href="<?= url('/') ?>"><?= icon('refresh', 14) ?><span>刷新</span></a>
         <a class="btn btn--ghost btn--sm" href="<?= url('/settings') ?>"><?= icon('settings', 14) ?><span>设置</span></a>
-        <span class="chip chip--ok"><i></i>运行中</span>
+        <span class="chip chip--ok"><i></i>面板运行中</span>
       </div>
     </header>
 

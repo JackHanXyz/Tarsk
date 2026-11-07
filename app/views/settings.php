@@ -27,6 +27,21 @@ declare(strict_types=1);
             <input class="input" type="number" name="refresh_interval" min="1" max="30" value="<?= e($settings['refresh_interval'] ?? '3') ?>">
           </div>
           <div class="field">
+            <label>托管 Nginx 端口</label>
+            <input class="input" type="number" name="nginx_port" min="1" max="65535" value="<?= e($settings['nginx_port'] ?? '8080') ?>">
+            <span class="hint">修改后需在软件商店重启托管 Nginx</span>
+          </div>
+          <div class="field">
+            <label>托管 PHP 端口</label>
+            <input class="input" type="number" name="php_port" min="1" max="65535" value="<?= e($settings['php_port'] ?? '9000') ?>">
+            <span class="hint">PHP-CGI FastCGI 监听端口</span>
+          </div>
+          <div class="field">
+            <label>托管 Redis 端口</label>
+            <input class="input" type="number" name="redis_port" min="1" max="65535" value="<?= e($settings['redis_port'] ?? '6380') ?>">
+            <span class="hint">修改后需重启 Redis</span>
+          </div>
+          <div class="field">
             <label>站点根目录</label>
             <input class="input mono" type="text" name="sites_root" value="<?= e($settings['sites_root'] ?? '') ?>" placeholder="<?= e($info['sites_root']) ?>">
             <span class="hint">留空自动使用 D:/wwwroot 或 storage/www</span>

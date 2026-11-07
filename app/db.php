@@ -96,6 +96,7 @@ function schema_statements(): array
             path VARCHAR(255) NOT NULL,
             php_version VARCHAR(20) NOT NULL DEFAULT '',
             port INT UNSIGNED NOT NULL DEFAULT 80,
+            rewrite VARCHAR(40) NOT NULL DEFAULT '',
             ssl_enabled TINYINT(1) NOT NULL DEFAULT 0,
             status ENUM('running','stopped') NOT NULL DEFAULT 'running',
             remark VARCHAR(255) NOT NULL DEFAULT '',
@@ -182,8 +183,13 @@ function schema_statements(): array
             name VARCHAR(120) NOT NULL,
             version VARCHAR(60) NOT NULL DEFAULT '',
             path VARCHAR(255) NOT NULL DEFAULT '',
-            status ENUM('installed','missing') NOT NULL DEFAULT 'missing',
-            checked_at DATETIME NULL
+            port INT UNSIGNED NOT NULL DEFAULT 0,
+            pid INT UNSIGNED NOT NULL DEFAULT 0,
+            managed TINYINT(1) NOT NULL DEFAULT 0,
+            log_path VARCHAR(255) NOT NULL DEFAULT '',
+            status ENUM('missing','installed','stopped','running','installing') NOT NULL DEFAULT 'missing',
+            checked_at DATETIME NULL,
+            updated_at DATETIME NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ];
 }
@@ -192,6 +198,47 @@ function install_schema(): void
 {
     foreach (schema_statements() as $sql) {
         db()->exec($sql);
+    }
+    migrate_schema();
+}
+
+/* ---------------------------- 增量字段迁移 ---------------------------- */
+
+function column_exists(string $table, string $column): bool
+{
+    $row = fetch_one(
+        'SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+        [t($table), $column]
+    );
+    return (int)($row['n'] ?? 0) > 0;
+}
+
+function ensure_column(string $table, string $column, string $definition): void
+{
+    if (!column_exists($table, $column)) {
+        db()->exec('ALTER TABLE ' . t($table) . ' ADD COLUMN `' . $column . '` ' . $definition);
+    }
+}
+
+function migrate_schema(): void
+{
+    $p = db_prefix();
+
+    ensure_column('sites', 'rewrite', "VARCHAR(40) NOT NULL DEFAULT ''");
+    ensure_column('soft', 'port', 'INT UNSIGNED NOT NULL DEFAULT 0');
+    ensure_column('soft', 'pid', 'INT UNSIGNED NOT NULL DEFAULT 0');
+    ensure_column('soft', 'managed', 'TINYINT(1) NOT NULL DEFAULT 0');
+    ensure_column('soft', 'log_path', "VARCHAR(255) NOT NULL DEFAULT ''");
+    ensure_column('soft', 'updated_at', 'DATETIME NULL');
+
+    try {
+        db()->exec(
+            "ALTER TABLE {$p}soft MODIFY COLUMN status ENUM('missing','installed','stopped','running','installing')
+             NOT NULL DEFAULT 'missing'"
+        );
+    } catch (Throwable $e) {
+        // 已是目标结构时忽略
     }
 }
 
@@ -219,6 +266,10 @@ function seed_data(array $admin = []): void
         'mysql_admin_user' => '',
         'mysql_admin_pass' => '',
         'login_notice' => '',
+        'nginx_port' => '8080',
+        'php_port' => '9000',
+        'redis_port' => '6380',
+        'panel_port' => '8888',
         'installed_at' => now(),
     ];
     foreach ($defaults as $key => $value) {

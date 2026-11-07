@@ -17,7 +17,7 @@ return [
         'name' => 'Tarsk',
         'base_url' => '',
         'debug' => true,
-        'version' => '1.1.0',
+        'version' => '1.3.0',
         'timezone' => 'Asia/Shanghai',
     ],
     'system' => [
