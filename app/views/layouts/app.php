@@ -11,22 +11,34 @@ $navGroups = [
     ],
     '运维' => [
         ['key' => 'sites', 'label' => '网站', 'url' => '/sites', 'icon' => 'globe'],
+        ['key' => 'deploy', 'label' => '一键部署', 'url' => '/deploy', 'icon' => 'zap'],
         ['key' => 'files', 'label' => '文件', 'url' => '/files', 'icon' => 'folder'],
+        ['key' => 'recycle', 'label' => '回收站', 'url' => '/recycle', 'icon' => 'trash'],
         ['key' => 'databases', 'label' => '数据库', 'url' => '/databases', 'icon' => 'database'],
         ['key' => 'monitor', 'label' => '监控', 'url' => '/monitor', 'icon' => 'activity'],
         ['key' => 'cron', 'label' => '计划任务', 'url' => '/cron', 'icon' => 'clock'],
         ['key' => 'firewall', 'label' => '防火墙', 'url' => '/firewall', 'icon' => 'shield'],
         ['key' => 'docker', 'label' => 'Docker', 'url' => '/docker', 'icon' => 'box'],
         ['key' => 'ssl', 'label' => 'SSL 证书', 'url' => '/ssl', 'icon' => 'lock'],
+        ['key' => 'ftp', 'label' => 'FTP', 'url' => '/ftp', 'icon' => 'download'],
         ['key' => 'store', 'label' => '软件商店', 'url' => '/store', 'icon' => 'bag'],
     ],
     '系统' => [
         ['key' => 'terminal', 'label' => 'Web 终端', 'url' => '/terminal', 'icon' => 'terminal'],
         ['key' => 'processes', 'label' => '进程管理', 'url' => '/processes', 'icon' => 'cpu'],
+        ['key' => 'plugins', 'label' => '插件市场', 'url' => '/plugins', 'icon' => 'box'],
         ['key' => 'logs', 'label' => '操作日志', 'url' => '/logs', 'icon' => 'list'],
         ['key' => 'settings', 'label' => '面板设置', 'url' => '/settings', 'icon' => 'settings'],
     ],
 ];
+
+// 已启用插件追加到导航
+$pluginNav = plugin_nav_items();
+if ($pluginNav) {
+    $navGroups['插件'] = array_map(function ($item) {
+        return ['key' => 'plugin:' . $item['href'], 'label' => $item['title'], 'url' => $item['href'], 'icon' => $item['icon']];
+    }, $pluginNav);
+}
 ?>
 <!doctype html>
 <html lang="zh-CN">

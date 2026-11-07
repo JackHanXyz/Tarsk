@@ -27,6 +27,7 @@ function sites_page(): void
         'nginx_running' => managed_nginx_installed() && runtime_state('nginx')['running'],
         'web_port' => active_web_port(),
         'php_versions' => php_versions(),
+        'php_options' => site_php_options(),
         'php_managed' => managed_php_installed() ? runtime_state('php') : null,
         'rewrite_presets' => site_rewrite_presets(),
     ], 'app');
@@ -72,9 +73,39 @@ function sites_show(int $id): void
         'effective_port' => site_effective_port($site),
         'rewrite_presets' => site_rewrite_presets(),
         'php_versions' => php_versions(),
+        'php_options' => site_php_options(),
         'nginx_managed' => managed_nginx_installed(),
         'nginx_running' => managed_nginx_installed() && runtime_state('nginx')['running'],
     ], 'app');
+}
+
+/**
+ * 校验站点 PHP 版本：未安装回退默认；已安装未运行则自动启动
+ */
+function sites_resolve_php(string $php, array &$notes): string
+{
+    if ($php === '') {
+        return '';
+    }
+    $versions = runtime_php_versions();
+    if (!isset($versions[$php])) {
+        $notes[] = '未知的 PHP 版本，已使用默认版本';
+        return '';
+    }
+    $key = $versions[$php]['key'];
+    $state = runtime_state($key);
+    if (!$state['installed']) {
+        $notes[] = 'PHP ' . $php . ' 尚未安装（可在软件商店安装），已回退默认版本';
+        return '';
+    }
+    if (!$state['running']) {
+        $start = runtime_start($key);
+        $notes[] = $start['message'];
+        if (!$start['ok']) {
+            return '';
+        }
+    }
+    return $php;
 }
 
 function sites_create(): void
@@ -112,6 +143,8 @@ function sites_create(): void
     }
 
     $port = active_web_port();
+    $notes = [];
+    $php = sites_resolve_php($php, $notes);
     execute(
         'INSERT INTO ' . t('sites') . '
          (name, domain, path, php_version, port, rewrite, ssl_enabled, status, remark, created_at)
@@ -120,7 +153,6 @@ function sites_create(): void
     );
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE name = ?', [$name]);
 
-    $notes = [];
     $confResult = write_site_vhost($site);
     $notes[] = $confResult['message'];
 
@@ -167,6 +199,8 @@ function sites_update(int $id): void
     if (!in_array($status, ['running', 'stopped'], true)) {
         $status = 'running';
     }
+    $notes = [];
+    $php = sites_resolve_php($php, $notes);
 
     execute(
         'UPDATE ' . t('sites') . ' SET domain = ?, php_version = ?, rewrite = ?, remark = ?, status = ? WHERE id = ?',
@@ -175,8 +209,9 @@ function sites_update(int $id): void
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
 
     $result = $status === 'running' ? write_site_vhost($site) : remove_site_vhost($site);
+    $notes[] = $result['message'];
     log_action('更新站点', (string)$site['name'], 'info');
-    flash($result['ok'] ? 'success' : 'warning', '站点配置已更新；' . $result['message']);
+    flash($result['ok'] ? 'success' : 'warning', '站点配置已更新；' . implode('；', $notes));
     redirect('/sites/' . $id);
 }
 

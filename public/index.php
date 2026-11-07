@@ -12,9 +12,29 @@ if (!is_file($root . '/config.php') || !is_file($root . '/install.lock') || $req
 $GLOBALS['config'] = require $root . '/config.php';
 require $root . '/app/bootstrap.php';
 
-$routes = require $root . '/app/routes.php';
+$routes = array_merge(require $root . '/app/routes.php', plugin_routes());
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $path = current_path();
+
+// 安全入口：启用后，未登录访问任何路径都需先经过入口路径
+$entrance = trim((string)setting('security_entrance', ''));
+if ($entrance !== '' && !current_user()) {
+    $epath = '/' . trim($entrance, '/');
+    if ($path === $epath) {
+        $_SESSION['entrance_ok'] = true;
+        redirect('/login');
+    }
+    if (empty($_SESSION['entrance_ok'])) {
+        http_response_code(404);
+        exit('404 Not Found');
+    }
+}
+
+// 登录页与两步验证页无需完整会话
+$guestPaths = ['/login', '/login/2fa'];
+
+// 已启用插件的启动钩子（如 IP 黑名单）
+plugin_boot_all();
 
 foreach ($routes as [$routeMethod, $pattern, $file, $function]) {
     if ($routeMethod !== $method) {
@@ -24,11 +44,14 @@ foreach ($routes as [$routeMethod, $pattern, $file, $function]) {
         if ($method === 'POST') {
             verify_csrf();
         }
-        if (!current_user() && !in_array($path, ['/login'], true)) {
+        if (!current_user() && !in_array($path, $guestPaths, true)) {
             flash('error', '请先登录');
             redirect('/login');
         }
-        require_once $root . '/app/controllers/' . $file;
+        $controller = str_starts_with($file, 'plugin:')
+            ? substr($file, 7)
+            : $root . '/app/controllers/' . $file;
+        require_once $controller;
         array_shift($matches);
         $args = array_map(function ($m) {
             return is_string($m) && ctype_digit($m) ? (int)$m : $m;

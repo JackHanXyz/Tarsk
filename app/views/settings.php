@@ -146,3 +146,131 @@ declare(strict_types=1);
     </div>
   </article>
 </section>
+
+<section class="grid grid--2 mt-18">
+  <article class="card">
+    <div class="card__head"><span class="card__title"><?= icon('shield', 17) ?>面板安全</span></div>
+    <form method="post" action="<?= url('/settings/security') ?>">
+      <?= csrf_field() ?>
+      <div class="card__body">
+        <div class="form-grid">
+          <div class="field span-2">
+            <label>安全入口</label>
+            <input class="input mono" type="text" name="security_entrance" value="<?= e($settings['security_entrance'] ?? '') ?>" placeholder="留空关闭，例如 tarsk-entry">
+            <span class="hint">启用后，仅能通过 <span class="mono">/入口名</span> 访问登录页，其余路径一律 404。请牢记入口名！</span>
+          </div>
+          <div class="field span-2">
+            <label>文件回收站</label>
+            <label class="switch">
+              <input type="checkbox" name="recycle_enabled" value="1" <?= ($settings['recycle_enabled'] ?? '1') === '1' ? 'checked' : '' ?>>
+              <span>删除文件时先移入回收站（可还原）</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="card__foot" style="display:flex;justify-content:flex-end">
+        <button class="btn btn--primary" type="submit"><?= icon('save', 14) ?>保存安全设置</button>
+      </div>
+    </form>
+  </article>
+
+  <article class="card">
+    <div class="card__head">
+      <span class="card__title"><?= icon('lock', 17) ?>两步验证（TOTP）</span>
+      <span class="badge <?= !empty($user['totp_enabled']) ? 'badge--ok' : 'badge--muted' ?>"><i></i><?= !empty($user['totp_enabled']) ? '已开启' : '未开启' ?></span>
+    </div>
+    <div class="card__body">
+      <?php if (empty($user['totp_enabled'])): ?>
+        <p class="hint">使用 Google Authenticator、微软 Authenticator 等 App 扫描二维码或手动录入密钥，开启后登录需输入动态验证码。</p>
+        <div id="tfaSetup" style="display:none">
+          <div class="field">
+            <label>密钥（手动录入）</label>
+            <input class="input mono" id="tfaSecret" readonly value="">
+          </div>
+          <div class="field">
+            <label>otpauth 链接</label>
+            <textarea class="input mono" id="tfaOtpauth" readonly rows="2" style="font-size:11px"></textarea>
+          </div>
+          <form method="post" action="<?= url('/settings/2fa/enable') ?>">
+            <?= csrf_field() ?>
+            <div class="field">
+              <label>输入 App 中显示的 6 位验证码完成开启</label>
+              <input class="input mono" type="text" name="code" pattern="\d{6}" maxlength="6" placeholder="000000" required>
+            </div>
+            <button class="btn btn--primary btn--sm" type="submit"><?= icon('check', 14) ?>确认开启</button>
+          </form>
+        </div>
+        <button class="btn btn--ghost btn--sm" id="tfaGenBtn" type="button"><?= icon('plus', 14) ?>生成密钥</button>
+      <?php else: ?>
+        <p class="hint">两步验证已开启。关闭前需在验证器 App 中确认当前动态验证码。</p>
+        <form method="post" action="<?= url('/settings/2fa/disable') ?>">
+          <?= csrf_field() ?>
+          <div class="field">
+            <label>当前动态验证码</label>
+            <input class="input mono" type="text" name="code" pattern="\d{6}" maxlength="6" placeholder="000000" required>
+          </div>
+          <button class="btn btn--danger-ghost btn--sm" type="submit" data-confirm="确定关闭两步验证？账户安全性会降低。"><?= icon('x', 14) ?>关闭两步验证</button>
+        </form>
+      <?php endif; ?>
+    </div>
+  </article>
+</section>
+
+<section class="grid grid--2 mt-18">
+  <article class="card">
+    <div class="card__head">
+      <span class="card__title"><?= icon('lock', 17) ?>面板 SSL</span>
+      <span class="badge <?= ($settings['panel_ssl_enabled'] ?? '0') === '1' ? 'badge--ok' : 'badge--muted' ?>"><i></i><?= ($settings['panel_ssl_enabled'] ?? '0') === '1' ? '已开启' : '未开启' ?></span>
+    </div>
+    <form method="post" action="<?= url('/settings/panel-ssl') ?>">
+      <?= csrf_field() ?>
+      <div class="card__body">
+        <div class="form-grid">
+          <div class="field">
+            <label>HTTPS 端口</label>
+            <input class="input" type="number" name="port" min="1" max="65535" value="<?= e($settings['panel_ssl_port'] ?? '8443') ?>">
+          </div>
+          <div class="field">
+            <label>开关</label>
+            <label class="switch">
+              <input type="checkbox" name="enabled" value="1" <?= ($settings['panel_ssl_enabled'] ?? '0') === '1' ? 'checked' : '' ?>>
+              <span>通过托管 Nginx 以 HTTPS 反向代理面板</span>
+            </label>
+          </div>
+        </div>
+        <div class="alert alert--info" style="margin:14px 0 0">
+          <?= icon('alert', 16) ?>
+          <span>需要先在软件商店安装托管 Nginx。使用自签证书，浏览器安全提示属正常现象；面板仍监听原 HTTP 端口，HTTPS 通过 <span class="mono">https://IP:端口</span> 访问。</span>
+        </div>
+      </div>
+      <div class="card__foot" style="display:flex;justify-content:flex-end">
+        <button class="btn btn--primary" type="submit"><?= icon('save', 14) ?>应用</button>
+      </div>
+    </form>
+  </article>
+</section>
+
+<script>
+(function () {
+  var btn = document.getElementById('tfaGenBtn');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    fetch('<?= url('/settings/2fa/prepare') ?>', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: '_token=<?= e(csrf_token()) ?>'
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data && data.ok) {
+        document.getElementById('tfaSecret').value = data.secret;
+        document.getElementById('tfaOtpauth').value = data.otpauth;
+        document.getElementById('tfaSetup').style.display = '';
+        btn.style.display = 'none';
+      } else {
+        btn.disabled = false;
+        alert('生成失败，请重试');
+      }
+    }).catch(function () { btn.disabled = false; alert('网络错误'); });
+  });
+})();
+</script>

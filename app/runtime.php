@@ -15,9 +15,63 @@ function runtime_soft_dir(): string
     return str_replace('\\', '/', $dir);
 }
 
-function runtime_catalog(): array
+function runtime_php_versions(): array
 {
     return [
+        '7.4' => [
+            'key' => 'php74',
+            'label' => '7.4.33',
+            'url' => 'https://windows.php.net/downloads/releases/archives/php-7.4.33-nts-Win32-vc15-x64.zip',
+            'port_setting' => 'php_port_74',
+            'port' => 9074,
+        ],
+        '8.0' => [
+            'key' => 'php80',
+            'label' => '8.0.30',
+            'url' => 'https://windows.php.net/downloads/releases/archives/php-8.0.30-nts-Win32-vs16-x64.zip',
+            'port_setting' => 'php_port_80',
+            'port' => 9080,
+        ],
+        '8.1' => [
+            'key' => 'php81',
+            'label' => '8.1 最新稳定版',
+            'url' => 'https://windows.php.net/downloads/releases/latest/php-8.1-nts-Win32-vs16-x64-latest.zip',
+            'port_setting' => 'php_port_81',
+            'port' => 9081,
+        ],
+        '8.2' => [
+            'key' => 'php82',
+            'label' => '8.2 最新稳定版',
+            'url' => 'https://windows.php.net/downloads/releases/latest/php-8.2-nts-Win32-vs16-x64-latest.zip',
+            'port_setting' => 'php_port_82',
+            'port' => 9082,
+        ],
+        '8.3' => [
+            'key' => 'php',
+            'label' => '8.3 最新稳定版',
+            'url' => 'https://windows.php.net/downloads/releases/latest/php-8.3-nts-Win32-vs16-x64-latest.zip',
+            'port_setting' => 'php_port',
+            'port' => 9000,
+        ],
+        '8.4' => [
+            'key' => 'php84',
+            'label' => '8.4 最新稳定版',
+            'url' => 'https://windows.php.net/downloads/releases/latest/php-8.4-nts-Win32-vs16-x64-latest.zip',
+            'port_setting' => 'php_port_84',
+            'port' => 9084,
+        ],
+    ];
+}
+
+function runtime_php_key(string $version): string
+{
+    $versions = runtime_php_versions();
+    return $versions[$version]['key'] ?? 'php';
+}
+
+function runtime_catalog(): array
+{
+    $catalog = [
         'nginx' => [
             'name' => 'Nginx',
             'version' => '1.26.2',
@@ -28,27 +82,31 @@ function runtime_catalog(): array
             'icon' => 'globe',
             'desc' => '高性能 Web 服务器。安装后 Tarsk 站点会由它托管，重新加载配置无需重启。',
         ],
-        'php' => [
-            'name' => 'PHP',
-            'version' => '8.3 最新稳定版',
-            'url' => 'https://windows.php.net/downloads/releases/latest/php-8.3-nts-Win32-vs16-x64-latest.zip',
-            'size' => '约 34 MB',
-            'port_setting' => 'php_port',
-            'default_port' => 9000,
-            'icon' => 'terminal',
-            'desc' => 'PHP-CGI 运行环境，为站点提供 PHP 解析；已预启用 PDO_MySQL、OpenSSL、mbstring 等常用扩展。',
-        ],
-        'redis' => [
-            'name' => 'Redis',
-            'version' => '5.0.14.1',
-            'url' => 'https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip',
-            'size' => '约 12 MB',
-            'port_setting' => 'redis_port',
-            'default_port' => 6380,
-            'icon' => 'zap',
-            'desc' => '内存键值缓存，用于会话、队列与对象缓存。默认监听 127.0.0.1:6380。',
-        ],
     ];
+    foreach (runtime_php_versions() as $ver => $info) {
+        $catalog[$info['key']] = [
+            'name' => 'PHP ' . $ver,
+            'version' => $info['label'],
+            'url' => $info['url'],
+            'size' => '约 34 MB',
+            'port_setting' => $info['port_setting'],
+            'default_port' => $info['port'],
+            'icon' => 'terminal',
+            'php_version' => $ver,
+            'desc' => 'PHP-CGI ' . $ver . ' 运行环境。多版本可并行安装，每个站点可独立选择 PHP 版本；预启用 PDO_MySQL、OpenSSL、mbstring 等常用扩展。',
+        ];
+    }
+    $catalog['redis'] = [
+        'name' => 'Redis',
+        'version' => '5.0.14.1',
+        'url' => 'https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip',
+        'size' => '约 12 MB',
+        'port_setting' => 'redis_port',
+        'default_port' => 6380,
+        'icon' => 'zap',
+        'desc' => '内存键值缓存，用于会话、队列与对象缓存。默认监听 127.0.0.1:6380。',
+    ];
+    return $catalog;
 }
 
 function runtime_package(string $key): ?array
@@ -63,9 +121,11 @@ function runtime_root(string $key): string
 
 function runtime_binary(string $key): string
 {
+    if (str_starts_with($key, 'php')) {
+        return 'php-cgi.exe';
+    }
     return [
         'nginx' => 'nginx.exe',
-        'php' => 'php-cgi.exe',
         'redis' => 'redis-server.exe',
     ][$key] ?? '';
 }
@@ -139,6 +199,27 @@ function runtime_db_row(string $key): ?array
     return fetch_one('SELECT * FROM ' . t('soft') . ' WHERE app_key = ? AND managed = 1', [$key]);
 }
 
+/**
+ * 通过 netstat 反查本机监听端口对应的 PID（Windows），用于托管进程发现
+ */
+function runtime_find_pid_by_port(int $port): int
+{
+    if (PHP_OS_FAMILY !== 'Windows') {
+        $result = run_cmd("ss -ltnp 2>/dev/null | grep ':$port '", 8);
+        if (preg_match('/pid=(\d+)/', $result['output'], $m)) {
+            return (int)$m[1];
+        }
+        return 0;
+    }
+    $result = run_cmd('netstat -ano -p TCP', 10);
+    foreach (preg_split('/\r?\n/', $result['output']) as $line) {
+        if (preg_match('/127\.0\.0\.1:' . $port . '\s+\S+\s+LISTENING\s+(\d+)/', trim($line), $m)) {
+            return (int)$m[1];
+        }
+    }
+    return 0;
+}
+
 function runtime_save_db(string $key, array $values): void
 {
     $pkg = runtime_package($key);
@@ -199,6 +280,14 @@ function runtime_state(string $key): array
         }
     }
     $running = $installed && runtime_pid_alive($pid);
+    if ($installed && !$running && str_starts_with($key, 'php')) {
+        $found = runtime_find_pid_by_port(runtime_port($key));
+        if ($found > 0) {
+            $pid = $found;
+            $running = true;
+            runtime_save_db($key, ['status' => 'running', 'pid' => $pid]);
+        }
+    }
 
     return [
         'key' => $key,
@@ -232,9 +321,11 @@ function runtime_states(): array
 function runtime_log_path(string $key): string
 {
     $root = runtime_root($key);
+    if (str_starts_with($key, 'php')) {
+        return $root . '/logs/php_error.log';
+    }
     return [
         'nginx' => $root . '/logs/error.log',
-        'php' => $root . '/logs/php_error.log',
         'redis' => $root . '/logs/redis.log',
     ][$key] ?? '';
 }
@@ -334,19 +425,20 @@ function runtime_install(string $key): array
     }
 
     $version = $pkg['version'];
-    switch ($key) {
-        case 'nginx':
-            runtime_configure_nginx($root);
-            $version = runtime_version('nginx') ?: $pkg['version'];
-            break;
-        case 'php':
-            runtime_configure_php($root);
-            $version = runtime_version('php') ?: $pkg['version'];
-            break;
-        case 'redis':
-            runtime_configure_redis($root);
-            $version = runtime_version('redis') ?: $pkg['version'];
-            break;
+    if (str_starts_with($key, 'php')) {
+        runtime_configure_php($root);
+        $version = runtime_version($key) ?: $pkg['version'];
+    } else {
+        switch ($key) {
+            case 'nginx':
+                runtime_configure_nginx($root);
+                $version = runtime_version('nginx') ?: $pkg['version'];
+                break;
+            case 'redis':
+                runtime_configure_redis($root);
+                $version = runtime_version('redis') ?: $pkg['version'];
+                break;
+        }
     }
 
     if (!is_dir(dirname(runtime_log_path($key)))) {
@@ -371,12 +463,15 @@ function runtime_install(string $key): array
 function runtime_version(string $key): string
 {
     $root = runtime_root($key);
-    $commands = [
-        'nginx' => escapeshellarg($root . '/nginx.exe') . ' -v 2>&1',
-        'php' => escapeshellarg($root . '/php.exe') . ' -v 2>&1',
-        'redis' => escapeshellarg($root . '/redis-server.exe') . ' --version 2>&1',
-    ];
-    $command = $commands[$key] ?? '';
+    if (str_starts_with($key, 'php')) {
+        $command = escapeshellarg($root . '/php.exe') . ' -v 2>&1';
+    } else {
+        $commands = [
+            'nginx' => escapeshellarg($root . '/nginx.exe') . ' -v 2>&1',
+            'redis' => escapeshellarg($root . '/redis-server.exe') . ' --version 2>&1',
+        ];
+        $command = $commands[$key] ?? '';
+    }
     if ($command === '' || !is_file($root . '/' . runtime_binary($key))) {
         return '';
     }
@@ -439,17 +534,13 @@ function runtime_configure_php(string $root): void
         . "error_log = \"" . str_replace('\\', '/', $root) . "/logs/php_error.log\"\n"
         . "post_max_size = 64M\n"
         . "upload_max_filesize = 64M\n"
-        . "extension_dir = \"ext\"\n"
-        . "extension = curl\n"
-        . "extension = fileinfo\n"
-        . "extension = gd\n"
-        . "extension = mbstring\n"
-        . "extension = openssl\n"
-        . "extension = pdo_mysql\n"
-        . "extension = mysqli\n"
-        . "extension = zip\n"
-        . "extension = exif\n"
-        . "date.timezone = Asia/Shanghai\n"
+        . "extension_dir = \"" . str_replace('\\', '/', $root) . "/ext\"\n";
+    foreach (['curl', 'fileinfo', 'gd', 'mbstring', 'openssl', 'pdo_mysql', 'mysqli', 'zip', 'exif'] as $ext) {
+        if (is_file($root . '/ext/php_' . $ext . '.dll') || PHP_OS_FAMILY !== 'Windows') {
+            $phpIni .= "extension = " . $ext . "\n";
+        }
+    }
+    $phpIni .= "date.timezone = Asia/Shanghai\n"
         . "cgi.force_redirect = 0\n"
         . "cgi.fix_pathinfo = 1\n"
         . "fastcgi.impersonate = 1\n"
@@ -491,11 +582,12 @@ function runtime_start(string $key): array
         return ['ok' => false, 'message' => '端口 ' . $port . ' 已被其他进程占用，请先在设置中调整端口'];
     }
 
+    if (str_starts_with($key, 'php')) {
+        return runtime_php_start($key);
+    }
     switch ($key) {
         case 'nginx':
             return runtime_nginx_start();
-        case 'php':
-            return runtime_php_start();
         case 'redis':
             return runtime_redis_start();
     }
@@ -504,11 +596,12 @@ function runtime_start(string $key): array
 
 function runtime_stop(string $key): array
 {
+    if (str_starts_with($key, 'php')) {
+        return runtime_stop_by_pid($key, runtime_package($key)['name'] ?? 'PHP');
+    }
     switch ($key) {
         case 'nginx':
             return runtime_nginx_stop();
-        case 'php':
-            return runtime_stop_by_pid($key, 'php');
         case 'redis':
             return runtime_redis_stop();
     }
@@ -608,44 +701,27 @@ function runtime_nginx_reload(): bool
     return $res['code'] === 0;
 }
 
-function runtime_php_start(): array
+function runtime_php_start(string $key = 'php'): array
 {
-    $root = managed_php_root();
-    if ($root === null) {
+    $root = runtime_root($key);
+    if (!is_file($root . '/php-cgi.exe')) {
         return ['ok' => false, 'message' => '未找到 php-cgi.exe'];
     }
-    $port = runtime_port('php');
+    $port = runtime_port($key);
     @mkdir($root . '/logs', 0777, true);
-    $script = sprintf(
-        "\$p = Start-Process -FilePath '%s' -ArgumentList @('-b','127.0.0.1:%d','-c','%s/php.ini')"
-        . " -WorkingDirectory '%s' -WindowStyle Hidden"
-        . " -RedirectStandardOutput '%s/logs/php.out.log'"
-        . " -RedirectStandardError '%s/logs/php.err.log' -PassThru\n"
-        . "Start-Sleep -Milliseconds 900\n\$p.Id",
-        $root . '/php-cgi.exe',
-        $port,
-        $root,
-        $root,
-        $root,
-        $root
-    );
-    $result = ps_run($script, 40);
-    $pid = 0;
-    foreach (preg_split('/\r?\n/', trim($result['output'])) as $line) {
-        if (ctype_digit(trim($line))) {
-            $pid = (int)trim($line);
-        }
-    }
+    $cmd = 'start "tarsk-' . $key . '" /MIN /D ' . escapeshellarg($root)
+        . ' ' . escapeshellarg($root . '/php-cgi.exe')
+        . ' -b 127.0.0.1:' . $port
+        . ' -c ' . escapeshellarg($root . '/php.ini');
+    pclose(popen($cmd, 'r'));
+    usleep(1200000);
+    $pid = runtime_find_pid_by_port($port);
     if ($pid <= 0) {
-        return ['ok' => false, 'message' => 'PHP-CGI 启动失败：' . ($result['error'] ?: $result['output'] ?: '未获得进程号')];
+        return ['ok' => false, 'message' => 'PHP-CGI 启动失败：端口 ' . $port . ' 未开始监听，请检查 php.ini 与 VC 运行库'];
     }
-    usleep(700000);
-    if (!runtime_pid_alive($pid)) {
-        $tail = runtime_log_tail('php', 20);
-        return ['ok' => false, 'message' => 'PHP-CGI 启动后立即退出：' . ($tail ?: '请检查 php.ini 与 VC 运行库')];
-    }
-    runtime_save_db('php', ['status' => 'running', 'pid' => $pid, 'port' => $port, 'version' => runtime_version('php')]);
-    return ['ok' => true, 'message' => 'PHP-CGI 已启动，监听 127.0.0.1:' . $port];
+    $name = runtime_package($key)['name'] ?? 'PHP';
+    runtime_save_db($key, ['status' => 'running', 'pid' => $pid, 'port' => $port, 'version' => runtime_version($key)]);
+    return ['ok' => true, 'message' => $name . ' 已启动，监听 127.0.0.1:' . $port];
 }
 
 function runtime_redis_start(): array

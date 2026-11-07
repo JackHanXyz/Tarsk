@@ -1,0 +1,8 @@
+{
+  "key": "demo",
+  "name": "示例插件",
+  "version": "1.0.0",
+  "description": "演示插件如何注册路由与导航：安装启用后，左侧菜单会出现「插件示例」入口。",
+  "icon": "box",
+  "nav": { "title": "插件示例", "href": "/plugins/demo", "icon": "box" }
+}

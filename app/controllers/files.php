@@ -197,6 +197,29 @@ function files_delete(): void
         flash('error', '文件不存在');
         redirect('/files');
     }
+
+    // 回收站开启时：先移入回收站而非直接删除
+    if ((string)setting('recycle_enabled', '1') === '1') {
+        $trashDir = storage_path('trash');
+        if (!is_dir($trashDir)) {
+            @mkdir($trashDir, 0777, true);
+        }
+        $trashPath = $trashDir . '/' . date('YmdHis') . '_' . bin2hex(random_bytes(3)) . '_' . basename($full);
+        $isDir = is_dir($full);
+        $size = $isDir ? dir_size($full) : (int)@filesize($full);
+        if (@rename($full, $trashPath)) {
+            execute(
+                'INSERT INTO ' . t('recycle') . ' (name, orig_path, trash_path, is_dir, size, deleted_at)
+                 VALUES (?,?,?,?,?,?)',
+                [basename($full), $full, str_replace('\\', '/', $trashPath), $isDir ? 1 : 0, $size, now()]
+            );
+            log_action('移入回收站', $rel, 'warning');
+            flash('success', '已移入回收站：' . basename($full));
+            redirect('/files?path=' . urlencode(dirname($rel)));
+        }
+        // rename 失败（如跨盘）时退回直接删除
+    }
+
     if (delete_path($full)) {
         log_action('删除文件', $rel, 'danger');
         flash('success', '已删除 ' . basename($full));

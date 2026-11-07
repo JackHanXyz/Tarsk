@@ -32,11 +32,13 @@ declare(strict_types=1);
       <dt>访问端口</dt><dd class="mono"><?= (int)$web_port ?> <?= $nginx_managed ? '（托管模式）' : '' ?></dd>
       <dt>PHP 环境</dt>
       <dd>
-        <?php if ($php_managed): ?>
-          <span class="badge <?= $php_managed['running'] ? 'badge--ok' : 'badge--warn' ?>" style="margin-right:6px">
-            Tarsk 托管 PHP · <?= (int)$php_managed['port'] ?> · <?= $php_managed['running'] ? '运行中' : '未启动' ?>
-          </span>
-        <?php endif; ?>
+        <?php foreach ($php_options as $ver => $opt): ?>
+          <?php if ($opt['installed']): ?>
+            <span class="badge <?= $opt['running'] ? 'badge--ok' : 'badge--warn' ?>" style="margin-right:4px">
+              <?= e($opt['label']) ?> · <?= (int)$opt['port'] ?> · <?= $opt['running'] ? '运行中' : '未启动' ?>
+            </span>
+          <?php endif; ?>
+        <?php endforeach; ?>
         <?php foreach ($php_versions as $ver): ?>
           <span class="badge badge--muted" style="margin-right:4px"><?= e($ver['version']) ?></span>
         <?php endforeach; ?>
@@ -154,8 +156,10 @@ declare(strict_types=1);
           <label>PHP 版本</label>
           <select class="input" name="php_version">
             <option value="">默认</option>
-            <?php foreach ($php_versions as $ver): ?>
-              <option value="<?= e($ver['version']) ?>"><?= e($ver['version']) ?></option>
+            <?php foreach ($php_options as $ver => $opt): ?>
+              <option value="<?= e($ver) ?>" <?= !$opt['installed'] ? 'disabled' : '' ?>>
+                <?= e($opt['label']) ?><?= $opt['installed'] ? ($opt['running'] ? '（运行中 :' . (int)$opt['port'] . '）' : '（已安装）') : '（未安装）' ?>
+              </option>
             <?php endforeach; ?>
           </select>
         </div>

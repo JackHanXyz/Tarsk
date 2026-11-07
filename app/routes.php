@@ -9,6 +9,8 @@ return [
     ['GET', '/', 'dashboard.php', 'dashboard_page'],
     ['GET', '/login', 'auth.php', 'login_page'],
     ['POST', '/login', 'auth.php', 'login_submit'],
+    ['GET', '/login/2fa', 'auth.php', 'login_2fa_page'],
+    ['POST', '/login/2fa', 'auth.php', 'login_2fa_submit'],
     ['POST', '/logout', 'auth.php', 'logout'],
 
     ['GET', '/sites', 'sites.php', 'sites_page'],
@@ -27,6 +29,14 @@ return [
     ['POST', '/files/delete', 'files.php', 'files_delete'],
     ['POST', '/files/upload', 'files.php', 'files_upload'],
     ['GET', '/files/download', 'files.php', 'files_download'],
+
+    ['GET', '/recycle', 'recycle.php', 'recycle_page'],
+    ['POST', '/recycle/restore', 'recycle.php', 'recycle_restore'],
+    ['POST', '/recycle/delete', 'recycle.php', 'recycle_delete'],
+    ['POST', '/recycle/clear', 'recycle.php', 'recycle_clear'],
+
+    ['GET', '/deploy', 'deploy.php', 'deploy_page'],
+    ['POST', '/deploy/run', 'deploy.php', 'deploy_run'],
 
     ['GET', '/databases', 'databases.php', 'databases_page'],
     ['POST', '/databases/create', 'databases.php', 'databases_create'],
@@ -54,6 +64,7 @@ return [
     ['GET', '/ssl', 'ssl.php', 'ssl_page'],
     ['POST', '/ssl/generate', 'ssl.php', 'ssl_generate'],
     ['POST', '/ssl/upload', 'ssl.php', 'ssl_upload'],
+    ['POST', '/ssl/letsencrypt', 'ssl.php', 'ssl_letsencrypt'],
     ['POST', '/ssl/(\d+)/delete', 'ssl.php', 'ssl_delete'],
 
     ['GET', '/store', 'store.php', 'store_page'],
@@ -69,9 +80,25 @@ return [
     ['GET', '/processes', 'processes.php', 'processes_page'],
     ['POST', '/processes/kill', 'processes.php', 'processes_kill'],
 
+    ['GET', '/ftp', 'ftp.php', 'ftp_page'],
+    ['POST', '/ftp/user/create', 'ftp.php', 'ftp_user_create'],
+    ['POST', '/ftp/user/delete', 'ftp.php', 'ftp_user_delete'],
+    ['POST', '/ftp/user/toggle', 'ftp.php', 'ftp_user_toggle'],
+    ['POST', '/ftp/service', 'ftp.php', 'ftp_service_action'],
+
+    ['GET', '/plugins', 'plugins_market.php', 'plugins_page'],
+    ['POST', '/plugins/install', 'plugins_market.php', 'plugins_install'],
+    ['POST', '/plugins/toggle', 'plugins_market.php', 'plugins_toggle'],
+    ['POST', '/plugins/uninstall', 'plugins_market.php', 'plugins_uninstall'],
+
     ['GET', '/logs', 'logs.php', 'logs_page'],
 
     ['GET', '/settings', 'settings.php', 'settings_page'],
     ['POST', '/settings/save', 'settings.php', 'settings_save'],
     ['POST', '/settings/password', 'settings.php', 'settings_password'],
+    ['POST', '/settings/security', 'settings.php', 'settings_security_save'],
+    ['POST', '/settings/2fa/prepare', 'settings.php', 'settings_2fa_prepare'],
+    ['POST', '/settings/2fa/enable', 'settings.php', 'settings_2fa_enable'],
+    ['POST', '/settings/2fa/disable', 'settings.php', 'settings_2fa_disable'],
+    ['POST', '/settings/panel-ssl', 'settings.php', 'settings_panel_ssl'],
 ];

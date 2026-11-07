@@ -9,6 +9,10 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/system.php';
 require_once __DIR__ . '/runtime.php';
 require_once __DIR__ . '/site_vhost.php';
+require_once __DIR__ . '/totp.php';
+require_once __DIR__ . '/plugins.php';
+require_once __DIR__ . '/panel_ssl.php';
+require_once __DIR__ . '/acme.php';
 
 date_default_timezone_set((string)(config('app.timezone') ?: 'Asia/Shanghai'));
 
@@ -57,7 +61,7 @@ function storage_path(string $sub = ''): string
 
 function ensure_storage(): void
 {
-    foreach (['', 'cache', 'logs', 'ssl', 'vhost', 'www', 'backup', 'tmp', 'uploads'] as $dir) {
+    foreach (['', 'cache', 'logs', 'ssl', 'vhost', 'www', 'backup', 'tmp', 'uploads', 'trash'] as $dir) {
         $path = storage_path($dir);
         if (!is_dir($path)) {
             @mkdir($path, 0777, true);
@@ -492,3 +496,15 @@ function render(string $view, array $data = [], string $layout = 'app'): void
 }
 
 ensure_storage();
+
+/* --------------------------- 自动增量迁移 --------------------------- */
+
+try {
+    if ((int)setting('schema_version', '1') < 2) {
+        install_schema();
+        seed_data();
+        setting_set('schema_version', '2');
+    }
+} catch (Throwable $e) {
+    // 数据库未就绪时跳过，安装向导会再次执行
+}

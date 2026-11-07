@@ -8,9 +8,45 @@ declare(strict_types=1);
   </div>
   <div class="toolbar">
     <button class="btn btn--ghost btn--sm" data-open="sslUpload"><?= icon('upload', 14) ?>导入证书</button>
+    <button class="btn btn--ghost btn--sm" data-open="sslLetsencrypt"><?= icon('zap', 14) ?>Let's Encrypt</button>
     <button class="btn btn--primary btn--sm" data-open="sslGenerate" <?= $openssl_ext ? '' : 'disabled' ?>><?= icon('lock', 14) ?>签发证书</button>
   </div>
 </div>
+
+<dialog class="modal" id="sslLetsencrypt">
+  <form method="post" action="<?= url('/ssl/letsencrypt') ?>" data-busy>
+    <?= csrf_field() ?>
+    <div class="modal__head">
+      <h3>Let's Encrypt 自动签发</h3>
+      <button class="icon-btn" type="button" data-close="sslLetsencrypt"><?= icon('x', 14) ?></button>
+    </div>
+    <div class="modal__body">
+      <div class="form-grid">
+        <div class="field span-2">
+          <label>选择站点（域名将取自站点绑定域名）</label>
+          <select class="input" name="site_id" required>
+            <option value="">请选择</option>
+            <?php foreach ($sites as $site): ?>
+              <option value="<?= (int)$site['id'] ?>"><?= e($site['name']) ?><?= $site['domain'] !== '' ? '（' . e($site['domain']) . '）' : '（未绑定域名）' ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="field span-2">
+          <label>联系邮箱（可选）</label>
+          <input class="input" type="email" name="email" placeholder="admin@yourdomain.com">
+        </div>
+      </div>
+      <div class="alert alert--info" style="margin:14px 0 0">
+        <?= icon('alert', 16) ?>
+        <span>要求：域名已解析到本机，且 80 端口的 HTTP 访问能到达站点根目录（托管 Nginx 需运行）。验证通过后证书自动配置到站点，有效期 90 天。</span>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close="sslLetsencrypt">取消</button>
+      <button class="btn btn--primary" type="submit"><?= icon('check', 14) ?>开始签发</button>
+    </div>
+  </form>
+</dialog>
 
 <?php if (!$openssl_ext): ?>
   <div class="alert alert--error">
@@ -53,7 +89,7 @@ declare(strict_types=1);
                   <span class="badge badge--ok"><?= (int)$cert['days_left'] ?> 天</span>
                 <?php endif; ?>
               </td>
-              <td><span class="badge badge--muted"><?= $cert['source'] === 'self' ? '自签名' : '导入' ?></span></td>
+              <td><span class="badge <?= $cert['source'] === 'letsencrypt' ? 'badge--ok' : 'badge--muted' ?>"><?= ['self' => '自签名', 'upload' => '导入', 'letsencrypt' => "Let's Encrypt"][$cert['source']] ?? e($cert['source']) ?></span></td>
               <td>
                 <div class="td-actions">
                   <form method="post" action="<?= url('/ssl/' . (int)$cert['id'] . '/delete') ?>" data-confirm="确定删除证书 <?= e($cert['domain']) ?>？">

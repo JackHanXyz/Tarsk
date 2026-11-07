@@ -181,6 +181,58 @@ function ssl_upload(): void
     redirect('/ssl');
 }
 
+function ssl_letsencrypt(): void
+{
+    require_login();
+    @set_time_limit(180);
+
+    $siteId = (int)($_POST['site_id'] ?? 0);
+    $email = trim((string)($_POST['email'] ?? ''));
+    $site = $siteId > 0 ? fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId]) : null;
+    if (!$site) {
+        flash('error', '请选择站点');
+        redirect('/ssl');
+    }
+    $domain = trim((string)$site['domain']);
+    if ($domain === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9.\-]{1,190}$/', $domain)) {
+        flash('error', '站点未绑定有效域名，无法申请 Let\'s Encrypt 证书');
+        redirect('/ssl');
+    }
+    if ($email === '') {
+        $email = 'admin@' . $domain;
+    }
+    $sitePath = str_replace('\\', '/', (string)$site['path']);
+    if (!is_dir($sitePath)) {
+        flash('error', '站点目录不存在');
+        redirect('/ssl');
+    }
+
+    if (!managed_nginx_installed() || !runtime_state('nginx')['running']) {
+        flash('error', '请先在软件商店安装并启动托管 Nginx（HTTP-01 验证需要）');
+        redirect('/ssl');
+    }
+    if (active_web_port() !== 80) {
+        flash('warning', '提示：Let\'s Encrypt 要求域名的 80 端口可访问本站点目录；当前站点端口为 ' . active_web_port() . '，若有端口映射可忽略');
+    }
+
+    $result = acme_issue([$domain], $sitePath, $email);
+    if (!$result['ok']) {
+        flash('error', '签发失败：' . $result['message']);
+        redirect('/ssl');
+    }
+
+    execute(
+        'INSERT INTO ' . t('certs') . ' (site_id, domain, cert_path, key_path, issuer, not_before, not_after, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        [$siteId, $domain, $result['cert'], $result['key'], "Let's Encrypt", now(), $result['expires'], 'letsencrypt', now()]
+    );
+    execute('UPDATE ' . t('sites') . ' SET ssl_enabled = 1 WHERE id = ?', [$siteId]);
+    write_site_vhost(fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId]));
+
+    log_action('签发 Let\'s Encrypt 证书', $domain);
+    flash('success', 'Let\'s Encrypt 证书签发成功，已自动配置到站点（有效期至 ' . $result['expires'] . '）');
+    redirect('/ssl');
+}
+
 function ssl_delete(int $id): void
 {
     $cert = fetch_one('SELECT * FROM ' . t('certs') . ' WHERE id = ?', [$id]);

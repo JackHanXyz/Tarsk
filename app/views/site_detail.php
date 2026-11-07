@@ -43,8 +43,10 @@ declare(strict_types=1);
             <label>PHP 版本</label>
             <select class="input" name="php_version">
               <option value="">默认</option>
-              <?php foreach ($php_versions as $ver): ?>
-                <option value="<?= e($ver['version']) ?>" <?= $site['php_version'] === $ver['version'] ? 'selected' : '' ?>><?= e($ver['version']) ?></option>
+              <?php foreach ($php_options as $ver => $opt): ?>
+                <option value="<?= e($ver) ?>" <?= $site['php_version'] === $ver ? 'selected' : '' ?> <?= !$opt['installed'] ? 'disabled' : '' ?>>
+                  <?= e($opt['label']) ?><?= $opt['installed'] ? ($opt['running'] ? '（运行中）' : '（已安装，保存时自动启动）') : '（未安装）' ?>
+                </option>
               <?php endforeach; ?>
             </select>
           </div>

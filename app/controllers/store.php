@@ -7,7 +7,7 @@ declare(strict_types=1);
 
 function managed_soft_keys(): array
 {
-    return ['nginx', 'php', 'redis'];
+    return array_keys(runtime_catalog());
 }
 
 function store_page(): void

@@ -1,6 +1,6 @@
 # Tarsk · 服务器运维面板
 
-Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔面板的核心功能做完整复刻：一键安装、运行环境托管、站点、文件、数据库、监控、计划任务、防火墙、Docker、SSL、软件商店、Web 终端与进程管理。
+Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔面板的核心功能做完整复刻：一键安装、运行环境托管、站点、文件、数据库、监控、计划任务、防火墙、Docker、SSL、软件商店、Web 终端、进程管理、回收站、两步验证、一键部署、FTP、插件市场与多版本 PHP 并行。
 
 ## 功能
 
@@ -8,26 +8,33 @@ Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔�
 - **Windows 一键安装**：`install.ps1` 自动检查 PHP 扩展、初始化数据库、生成管理员、注册登录自启任务并启动面板。
 - **Linux 一键安装**：`install.sh` 生成 systemd 服务并启动。
 - **托管运行环境**：在软件商店内真实下载、解压、配置、启动、停止、重启、卸载 **Nginx / PHP-CGI / Redis**，安装到 `storage/soft`，不污染系统目录，无需管理员权限。
+- **多版本 PHP 并行**：PHP 7.4 / 8.0 / 8.1 / 8.2 / 8.3 / 8.4 可同时安装、同时运行（各自独立端口 9074~9084），每个站点可独立选择 PHP 版本。
 - **端口隔离**：托管 Nginx 默认 `8080`、PHP-CGI `9000`、Redis `6380`，与系统已有服务并存。
 
 ### 站点
 - 一键创建运行目录、默认首页、Nginx vhost，可选 **同时创建 MySQL 数据库**。
 - **伪静态预设**：WordPress / Laravel / ThinkPHP / Discuz! / DedeCMS。
-- 站点详情页：修改域名、PHP 版本、伪静态、状态，实时预览 vhost、查看访问日志、关联数据库与证书。
+- **按站点切换 PHP 版本**：站点详情页选择已安装的托管版本，保存即自动启动并切换 FastCGI 通道。
+- 站点详情页：修改域名、伪静态、状态，实时预览 vhost、查看访问日志、关联数据库与证书。
 - 托管模式下保存即自动 `nginx -s reload`。
 
 ### 运维
 - **文件管理**：浏览、新建目录/文件、在线编辑、上传、下载、重命名、删除，路径穿越防护。
+- **回收站**：删除的文件先移入回收站，可还原、彻底删除或一键清空（可在设置中关闭）。
+- **一键部署**：WordPress 自动下载、解压、建库并写入 `wp-config.php`（含随机安全盐），打开站点即可完成安装向导。
 - **数据库**：浏览库表、创建/删除数据库、mysqldump 备份、导入 root 账号解锁完整权限。
 - **监控**：真实 CPU / 内存 / 磁盘 / 网卡采样，30 秒入库，24 小时曲线。
 - **计划任务**：Windows `schtasks` / Linux `crontab` 注册、启停、立即执行。
 - **防火墙**：读取系统配置，写入/移除 Tarsk 规则（需管理员权限）。
 - **Docker**：容器/镜像列表、启停、重启、删除、`docker run`。
-- **SSL**：OpenSSL 自签证书（含 SAN）、PEM 导入、到期提醒、自动写入 HTTPS vhost。
+- **SSL 证书**：OpenSSL 自签（含 SAN）、PEM 导入、**Let's Encrypt 免费证书自动签发（ACME v2 / HTTP-01，纯 PHP 实现）**、到期提醒、自动写入 HTTPS vhost。
+- **面板 SSL**：一键由托管 Nginx 以 HTTPS 反向代理面板（自签证书，可换正式证书）。
+- **FTP 服务**：内置纯 PHP FTP 服务器（stream_select 多客户端、被动模式、账号主目录隔离），账号 CRUD 与一键启停。
+- **插件市场**：本地插件目录（`app/plugins`）安装/启停/卸载，插件可注册路由与左侧导航，内置示例插件与 IP 黑名单插件（支持 `1.2.3.*` 通配，实时生效）。
 - **Web 终端**：面板内真实执行系统命令，带会话历史与操作日志。
 - **进程管理**：按内存排序查看进程，按 PID 结束。
 - **软件商店**：托管环境安装管理 + 系统软件探测 / winget 静默安装。
-- **明暗双主题**、移动端抽屉导航、操作日志审计。
+- **安全体系**：安全入口路径（未登录访问一律 404）、TOTP 两步验证（兼容 Google / 微软 Authenticator）、CSRF、会话固定防护、操作日志审计。
 
 ## 环境要求
 
@@ -91,24 +98,31 @@ php -S 0.0.0.0:8888 -t public public/router.php
 ```
 Tarsk/
 ├── app/
-│   ├── bootstrap.php       配置、会话、鉴权、模板、日志
+│   ├── bootstrap.php       配置、会话、鉴权、模板、日志、自动迁移
 │   ├── db.php              PDO、表结构、增量迁移、种子数据
 │   ├── system.php          跨平台系统指标/服务/软件/防火墙/Docker/MySQL
-│   ├── runtime.php         Nginx / PHP / Redis 下载安装与进程管理
-│   ├── site_vhost.php      站点 vhost 生成、伪静态、日志、同步
+│   ├── runtime.php         Nginx / 多版本 PHP / Redis 下载安装与进程管理
+│   ├── site_vhost.php      站点 vhost 生成、伪静态、按站点 PHP 版本
+│   ├── acme.php            Let's Encrypt ACME v2 客户端（纯 PHP）
+│   ├── ftpd.php            纯 PHP FTP 服务器核心
+│   ├── totp.php            RFC 6238 两步验证
+│   ├── plugins.php         插件扫描/路由/导航/启动钩子
+│   ├── panel_ssl.php       面板 HTTPS 反代
 │   ├── routes.php          路由表
+│   ├── plugins/            内置插件（demo、ipblock）
 │   ├── controllers/        各功能控制器
 │   └── views/              页面模板与布局
 ├── bin/
 │   ├── configure.php       命令行配置 + 初始化
 │   ├── install.php         CLI 初始化（使用已有 config）
+│   ├── ftpd.php            FTP 守护进程入口
 │   └── reset-password.php  重置管理员密码
 ├── public/
-│   ├── index.php           入口
+│   ├── index.php           入口（安全入口检查、插件路由合并）
 │   ├── install.php         网页安装向导
 │   ├── router.php          PHP 内置服务器路由
 │   └── assets/             设计系统样式与脚本
-├── storage/                缓存、日志、证书、软件安装目录（运行时生成，已忽略）
+├── storage/                缓存、日志、证书、回收站、软件安装目录（运行时生成，已忽略）
 ├── install.ps1             Windows 一键安装
 ├── install.sh              Linux 一键安装
 └── config.php              配置（安装时生成，已忽略）
@@ -125,9 +139,10 @@ Tarsk/
 ## 安全建议
 
 1. 生产环境将 `config.php` 中 `app.debug` 设为 `false`。
-2. 面板仅绑定内网或置于 HTTPS 反向代理后，避免直接暴露公网。
+2. 在「面板设置 → 面板安全」配置安全入口并开启两步验证；面板仅绑定内网或置于 HTTPS 反向代理后。
 3. 定期审阅「操作日志」，为面板设置强密码。
 4. 终端与软件安装具有系统权限，请仅在可信环境使用。
+5. 启用面板 SSL 后，建议把自签证书替换为正式证书（替换 `storage/ssl/panel/` 下的 cert.pem / privkey.pem 即可）。
 
 ## License
 

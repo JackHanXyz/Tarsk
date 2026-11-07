@@ -191,6 +191,34 @@ function schema_statements(): array
             checked_at DATETIME NULL,
             updated_at DATETIME NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}recycle (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(190) NOT NULL,
+            orig_path VARCHAR(255) NOT NULL,
+            trash_path VARCHAR(255) NOT NULL,
+            is_dir TINYINT(1) NOT NULL DEFAULT 0,
+            size BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            deleted_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}ftp_users (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(60) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            home_dir VARCHAR(255) NOT NULL DEFAULT '',
+            status ENUM('enabled','disabled') NOT NULL DEFAULT 'enabled',
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}plugins (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            app_key VARCHAR(60) NOT NULL UNIQUE,
+            name VARCHAR(120) NOT NULL,
+            version VARCHAR(40) NOT NULL DEFAULT '',
+            enabled TINYINT(1) NOT NULL DEFAULT 0,
+            installed_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ];
 }
 
@@ -225,7 +253,15 @@ function migrate_schema(): void
 {
     $p = db_prefix();
 
+    // 升级场景：补齐第二阶段新增的表（CREATE IF NOT EXISTS 幂等）
+    foreach (schema_statements() as $sql) {
+        db()->exec($sql);
+    }
+
     ensure_column('sites', 'rewrite', "VARCHAR(40) NOT NULL DEFAULT ''");
+    ensure_column('sites', 'php_port', 'INT UNSIGNED NOT NULL DEFAULT 0');
+    ensure_column('users', 'totp_secret', "VARCHAR(64) NOT NULL DEFAULT ''");
+    ensure_column('users', 'totp_enabled', 'TINYINT(1) NOT NULL DEFAULT 0');
     ensure_column('soft', 'port', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensure_column('soft', 'pid', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensure_column('soft', 'managed', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -236,6 +272,13 @@ function migrate_schema(): void
         db()->exec(
             "ALTER TABLE {$p}soft MODIFY COLUMN status ENUM('missing','installed','stopped','running','installing')
              NOT NULL DEFAULT 'missing'"
+        );
+    } catch (Throwable $e) {
+        // 已是目标结构时忽略
+    }
+    try {
+        db()->exec(
+            "ALTER TABLE {$p}certs MODIFY COLUMN source ENUM('self','upload','letsencrypt') NOT NULL DEFAULT 'self'"
         );
     } catch (Throwable $e) {
         // 已是目标结构时忽略
@@ -270,6 +313,11 @@ function seed_data(array $admin = []): void
         'php_port' => '9000',
         'redis_port' => '6380',
         'panel_port' => '8888',
+        'recycle_enabled' => '1',
+        'security_entrance' => '',
+        'ftp_port' => '2121',
+        'panel_ssl_enabled' => '0',
+        'panel_ssl_port' => '8443',
         'installed_at' => now(),
     ];
     foreach ($defaults as $key => $value) {

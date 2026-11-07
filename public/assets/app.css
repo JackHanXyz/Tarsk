@@ -647,3 +647,8 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .45); backdrop-filter: blu
   .app-grid { grid-template-columns: minmax(0, 1fr); }
   .section-head { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
+
+/* switch */
+.switch { display:flex; align-items:center; gap:8px; cursor:pointer; }
+.switch input[type=checkbox] { width:16px; height:16px; accent-color: var(--brand); }
+.switch span { font-size:13px; color: var(--text-2); }

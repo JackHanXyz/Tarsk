@@ -102,3 +102,98 @@ function settings_password(): void
     session_destroy();
     redirect('/login');
 }
+
+/* ------------------------------- 安全设置 ------------------------------- */
+
+function settings_security_save(): void
+{
+    require_login();
+    $entrance = trim((string)($_POST['security_entrance'] ?? ''));
+    $recycle = (string)($_POST['recycle_enabled'] ?? '0') === '1' ? '1' : '0';
+
+    if ($entrance !== '' && !preg_match('/^[A-Za-z0-9_-]{4,32}$/', $entrance)) {
+        flash('error', '安全入口须为 4-32 位字母、数字、短横线或下划线');
+        redirect('/settings');
+    }
+    setting_set('security_entrance', $entrance);
+    setting_set('recycle_enabled', $recycle);
+    log_action('安全设置', '安全入口：' . ($entrance !== '' ? '/' . $entrance : '关闭') . '；回收站：' . ($recycle === '1' ? '开' : '关'), 'warning');
+    flash('success', $entrance !== ''
+        ? '安全设置已保存，入口地址：' . url('/' . $entrance) . '（请牢记）'
+        : '安全设置已保存');
+    redirect('/settings');
+}
+
+function settings_2fa_prepare(): void
+{
+    $user = require_login();
+    $secret = totp_generate_secret();
+    $_SESSION['tfa_setup_secret'] = $secret;
+    json_response([
+        'ok' => true,
+        'secret' => $secret,
+        'otpauth' => totp_otpauth_url($secret, (string)$user['username'], (string)setting('panel_name', 'Tarsk')),
+    ]);
+}
+
+function settings_2fa_enable(): void
+{
+    $user = require_login();
+    $secret = (string)($_SESSION['tfa_setup_secret'] ?? '');
+    $code = trim((string)($_POST['code'] ?? ''));
+    if ($secret === '') {
+        flash('error', '请先生成密钥');
+        redirect('/settings');
+    }
+    if (!totp_verify($secret, $code)) {
+        flash('error', '验证码不正确，两步验证未开启');
+        redirect('/settings');
+    }
+    execute('UPDATE ' . t('users') . ' SET totp_secret = ?, totp_enabled = 1 WHERE id = ?', [$secret, $user['id']]);
+    unset($_SESSION['tfa_setup_secret']);
+    log_action('开启两步验证', (string)$user['username'], 'warning');
+    flash('success', '两步验证已开启，下次登录需输入动态验证码');
+    redirect('/settings');
+}
+
+function settings_2fa_disable(): void
+{
+    $user = require_login();
+    $code = trim((string)($_POST['code'] ?? ''));
+    if (!totp_verify((string)($user['totp_secret'] ?? ''), $code)) {
+        flash('error', '验证码不正确，无法关闭');
+        redirect('/settings');
+    }
+    execute("UPDATE " . t('users') . " SET totp_secret = '', totp_enabled = 0 WHERE id = ?", [$user['id']]);
+    log_action('关闭两步验证', (string)$user['username'], 'warning');
+    flash('success', '两步验证已关闭');
+    redirect('/settings');
+}
+
+/* ------------------------------- 面板 SSL ------------------------------- */
+
+function settings_panel_ssl(): void
+{
+    require_login();
+    $enable = (string)($_POST['enabled'] ?? '0') === '1';
+    $port = max(1, min(65535, (int)($_POST['port'] ?? 8443)));
+    setting_set('panel_ssl_port', (string)$port);
+
+    if (!$enable) {
+        setting_set('panel_ssl_enabled', '0');
+        panel_ssl_remove_vhost();
+        log_action('面板 SSL', '已关闭', 'warning');
+        flash('success', '面板 SSL 已关闭');
+        redirect('/settings');
+    }
+
+    $result = panel_ssl_apply($port);
+    if ($result['ok']) {
+        setting_set('panel_ssl_enabled', '1');
+        log_action('面板 SSL', '已开启，端口 ' . $port, 'warning');
+        flash('success', $result['message']);
+    } else {
+        flash('error', $result['message']);
+    }
+    redirect('/settings');
+}

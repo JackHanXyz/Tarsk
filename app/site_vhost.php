@@ -34,6 +34,43 @@ function active_php_port(): int
     return (int)setting('php_port', 9000);
 }
 
+/**
+ * 站点实际使用的 PHP-CGI 端口：按站点选择的 PHP 版本解析，未安装/未运行回退默认版本
+ */
+function site_php_port(array $site): int
+{
+    $ver = trim((string)($site['php_version'] ?? ''));
+    if ($ver !== '' && function_exists('runtime_php_versions')) {
+        $versions = runtime_php_versions();
+        if (isset($versions[$ver])) {
+            $key = $versions[$ver]['key'];
+            $state = runtime_state($key);
+            if ($state['running']) {
+                return (int)$state['port'];
+            }
+        }
+    }
+    return active_php_port();
+}
+
+/**
+ * 站点可选 PHP 版本列表（含安装/运行状态），供站点表单使用
+ */
+function site_php_options(): array
+{
+    $options = [];
+    foreach (runtime_php_versions() as $ver => $info) {
+        $state = runtime_state($info['key']);
+        $options[$ver] = [
+            'label' => 'PHP ' . $ver,
+            'installed' => $state['installed'],
+            'running' => $state['running'],
+            'port' => $state['port'],
+        ];
+    }
+    return $options;
+}
+
 function site_rewrite_presets(): array
 {
     return [
@@ -75,7 +112,7 @@ function site_vhost_content(array $site): string
     $serverName = ($site['domain'] ?? '') !== '' ? $site['domain'] : $site['name'] . '.local';
     $path = str_replace('\\', '/', (string)$site['path']);
     $port = site_effective_port($site);
-    $phpPort = active_php_port();
+    $phpPort = site_php_port($site);
 
     $lines = [
         '# 由 Tarsk 自动生成 · ' . date('Y-m-d H:i:s'),
