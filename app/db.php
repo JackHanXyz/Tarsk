@@ -1,0 +1,239 @@
+<?php
+declare(strict_types=1);
+
+/**
+ * Tarsk 数据层：PDO 连接、表结构、初始化种子
+ */
+
+function db_prefix(): string
+{
+    return (string)(config('database.prefix') ?: 'tarsk_');
+}
+
+function make_pdo(?array $override = null): PDO
+{
+    $db = $override ?: config('database');
+    $dsn = sprintf(
+        'mysql:host=%s;port=%s;dbname=%s;charset=%s',
+        $db['host'], $db['port'], $db['name'], $db['charset'] ?? 'utf8mb4'
+    );
+    return new PDO($dsn, $db['user'], $db['pass'], [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ]);
+}
+
+function db(): PDO
+{
+    static $pdo = null;
+    if ($pdo === null) {
+        $pdo = make_pdo();
+    }
+    return $pdo;
+}
+
+function q(string $sql, array $params = []): PDOStatement
+{
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt;
+}
+
+function fetch_all(string $sql, array $params = []): array
+{
+    return q($sql, $params)->fetchAll();
+}
+
+function fetch_one(string $sql, array $params = []): ?array
+{
+    $row = q($sql, $params)->fetch();
+    return $row === false ? null : $row;
+}
+
+function execute(string $sql, array $params = []): int
+{
+    return q($sql, $params)->rowCount();
+}
+
+function t(string $name): string
+{
+    return db_prefix() . $name;
+}
+
+function now(): string
+{
+    return date('Y-m-d H:i:s');
+}
+
+/* ------------------------------ 数据表结构 ------------------------------ */
+
+function schema_statements(): array
+{
+    $p = db_prefix();
+
+    return [
+        "CREATE TABLE IF NOT EXISTS {$p}users (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(60) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            role ENUM('admin','operator') NOT NULL DEFAULT 'admin',
+            last_login_at DATETIME NULL,
+            last_ip VARCHAR(64) NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}settings (
+            skey VARCHAR(190) NOT NULL PRIMARY KEY,
+            svalue TEXT NOT NULL,
+            updated_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}sites (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(120) NOT NULL UNIQUE,
+            domain VARCHAR(190) NOT NULL DEFAULT '',
+            path VARCHAR(255) NOT NULL,
+            php_version VARCHAR(20) NOT NULL DEFAULT '',
+            port INT UNSIGNED NOT NULL DEFAULT 80,
+            ssl_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            status ENUM('running','stopped') NOT NULL DEFAULT 'running',
+            remark VARCHAR(255) NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}databases (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            db_name VARCHAR(120) NOT NULL UNIQUE,
+            db_user VARCHAR(120) NOT NULL DEFAULT '',
+            db_pass VARCHAR(120) NOT NULL DEFAULT '',
+            site_id INT UNSIGNED NULL,
+            remark VARCHAR(255) NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}monitor (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            cpu DECIMAL(6,2) NOT NULL DEFAULT 0,
+            load1 DECIMAL(6,2) NOT NULL DEFAULT 0,
+            mem_used BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            mem_total BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            disk_used BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            disk_total BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            net_rx BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            net_tx BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL,
+            KEY idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}cron (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(120) NOT NULL,
+            schedule ENUM('every_minute','every_5_minutes','hourly','daily','weekly','boot') NOT NULL DEFAULT 'daily',
+            run_time VARCHAR(20) NOT NULL DEFAULT '03:00',
+            command TEXT NOT NULL,
+            status ENUM('enabled','disabled') NOT NULL DEFAULT 'enabled',
+            last_run_at DATETIME NULL,
+            last_result VARCHAR(255) NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}firewall (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(120) NOT NULL,
+            direction ENUM('inbound','outbound') NOT NULL DEFAULT 'inbound',
+            action ENUM('allow','block') NOT NULL DEFAULT 'allow',
+            protocol ENUM('tcp','udp') NOT NULL DEFAULT 'tcp',
+            port VARCHAR(60) NOT NULL DEFAULT '',
+            remote_ip VARCHAR(190) NOT NULL DEFAULT 'any',
+            status ENUM('enabled','disabled') NOT NULL DEFAULT 'enabled',
+            error VARCHAR(255) NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}certs (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            site_id INT UNSIGNED NULL,
+            domain VARCHAR(190) NOT NULL,
+            cert_path VARCHAR(255) NOT NULL,
+            key_path VARCHAR(255) NOT NULL,
+            issuer VARCHAR(190) NOT NULL DEFAULT '',
+            not_before DATETIME NULL,
+            not_after DATETIME NULL,
+            source ENUM('self','upload') NOT NULL DEFAULT 'self',
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}logs (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT UNSIGNED NULL,
+            username VARCHAR(60) NOT NULL DEFAULT '',
+            action VARCHAR(120) NOT NULL,
+            detail VARCHAR(255) NOT NULL DEFAULT '',
+            ip VARCHAR(64) NOT NULL DEFAULT '',
+            level ENUM('info','warning','danger') NOT NULL DEFAULT 'info',
+            created_at DATETIME NOT NULL,
+            KEY idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}soft (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            app_key VARCHAR(60) NOT NULL UNIQUE,
+            name VARCHAR(120) NOT NULL,
+            version VARCHAR(60) NOT NULL DEFAULT '',
+            path VARCHAR(255) NOT NULL DEFAULT '',
+            status ENUM('installed','missing') NOT NULL DEFAULT 'missing',
+            checked_at DATETIME NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ];
+}
+
+function install_schema(): void
+{
+    foreach (schema_statements() as $sql) {
+        db()->exec($sql);
+    }
+}
+
+function seed_data(array $admin = []): void
+{
+    $p = db_prefix();
+    if ((int)fetch_one("SELECT COUNT(*) AS n FROM {$p}users")['n'] === 0) {
+        execute(
+            "INSERT INTO {$p}users (username, password_hash, role, created_at) VALUES (?,?,?,?)",
+            [
+                $admin['username'] ?? 'admin',
+                password_hash($admin['password'] ?? 'Tarsk@2026', PASSWORD_DEFAULT),
+                'admin',
+                now(),
+            ]
+        );
+    }
+
+    $defaults = [
+        'panel_name' => 'Tarsk',
+        'sites_root' => '',
+        'backup_path' => '',
+        'refresh_interval' => '3',
+        'monitor_retention_hours' => '72',
+        'mysql_admin_user' => '',
+        'mysql_admin_pass' => '',
+        'login_notice' => '',
+        'installed_at' => now(),
+    ];
+    foreach ($defaults as $key => $value) {
+        execute(
+            "INSERT IGNORE INTO {$p}settings (skey, svalue, updated_at) VALUES (?,?,?)",
+            [$key, $value, now()]
+        );
+    }
+
+    trim_logs();
+}
+
+function trim_logs(): void
+{
+    $p = db_prefix();
+    execute("DELETE FROM {$p}logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 90 DAY)");
+    execute("DELETE FROM {$p}monitor WHERE created_at < DATE_SUB(NOW(), INTERVAL 72 HOUR)");
+}
