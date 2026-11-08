@@ -17,6 +17,7 @@ require_once __DIR__ . '/backup.php';
 require_once __DIR__ . '/tasks.php';
 require_once __DIR__ . '/security.php';
 require_once __DIR__ . '/notify.php';
+require_once __DIR__ . '/updater.php';
 
 date_default_timezone_set((string)(config('app.timezone') ?: 'Asia/Shanghai'));
 

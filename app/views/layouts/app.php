@@ -28,6 +28,7 @@ $navGroups = [
         ['key' => 'terminal', 'label' => 'Web 终端', 'url' => '/terminal', 'icon' => 'terminal'],
         ['key' => 'processes', 'label' => '进程管理', 'url' => '/processes', 'icon' => 'cpu'],
         ['key' => 'plugins', 'label' => '插件市场', 'url' => '/plugins', 'icon' => 'box'],
+        ['key' => 'update', 'label' => '版本更新', 'url' => '/update', 'icon' => 'refresh'],
         ['key' => 'logs', 'label' => '操作日志', 'url' => '/logs', 'icon' => 'list'],
         ['key' => 'settings', 'label' => '面板设置', 'url' => '/settings', 'icon' => 'settings'],
     ],

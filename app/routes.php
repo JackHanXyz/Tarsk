@@ -106,6 +106,11 @@ return [
     ['GET', '/logs', 'logs.php', 'logs_page'],
     ['GET', '/logs/export', 'logs.php', 'logs_export'],
 
+    ['GET', '/update', 'update.php', 'update_page'],
+    ['POST', '/update/check', 'update.php', 'update_check'],
+    ['POST', '/update/apply', 'update.php', 'update_apply'],
+    ['POST', '/update/settings', 'update.php', 'update_settings'],
+
     ['GET', '/settings', 'settings.php', 'settings_page'],
     ['POST', '/settings/save', 'settings.php', 'settings_save'],
     ['POST', '/settings/password', 'settings.php', 'settings_password'],

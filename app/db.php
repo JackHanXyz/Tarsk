@@ -365,6 +365,10 @@ function seed_data(array $admin = []): void
         'alert_disk' => '90',
         'alert_cooldown' => '30',
         'alert_last_at' => '',
+        'update_branch' => 'main',
+        'update_proxy' => '',
+        'update_cache' => '',
+        'update_last_result' => '',
         'installed_at' => now(),
     ];
     foreach ($defaults as $key => $value) {

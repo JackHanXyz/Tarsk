@@ -5,6 +5,7 @@ Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔�
 ## 功能
 
 ### 安装与运行环境
+- **一键安装**：`install-online.sh` / `install-online.ps1` 云端一键安装与升级（GitHub 源码、离线包、代理、保留配置），面板内「版本更新」可检查并一键升级。
 - **Windows 一键安装**：`install.ps1` 自动检查 PHP 扩展、初始化数据库、生成管理员、注册登录自启任务并启动面板。
 - **Linux 一键安装**：`install.sh` 生成 systemd 服务并启动。
 - **托管运行环境**：在软件商店内真实下载、解压、配置、启动、停止、重启、卸载 **Nginx / PHP-CGI / Redis**，安装到 `storage/soft`，不污染系统目录，无需管理员权限。
@@ -49,7 +50,47 @@ Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔�
 
 ## 安装
 
-### Windows 一键安装
+### 云端一键安装（推荐）
+
+**Linux**（自动下载 GitHub 最新源码、初始化、注册 systemd 并启动）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JackHanXyz/Tarsk/main/install-online.sh \
+  | sudo bash -s -- --admin-pass 'YourPassword' --db-user root --db-pass 'dbpass'
+```
+
+**Windows**（PowerShell 5.1+，自动下载、解压、初始化并注册开机自启）：
+
+```powershell
+irm https://raw.githubusercontent.com/JackHanXyz/Tarsk/main/install-online.ps1 -OutFile "$env:TEMP\tarsk-install.ps1"
+& "$env:TEMP\tarsk-install.ps1" -Dir 'C:\Tarsk' -DbUser root -DbPass 'dbpass' -AdminPass 'YourPassword'
+```
+
+常用参数：
+
+| 参数（Linux / Windows） | 说明 |
+|---|---|
+| `--dir` / `-Dir` | 安装目录，Linux 默认 `/opt/tarsk`，Windows 默认 `C:\Tarsk` |
+| `--upgrade` / `-Upgrade` | 升级模式：保留 `config.php`、`install.lock` 与 `storage`，重启服务 |
+| `--local-zip` / `-LocalZip` | 使用离线源码包（内网或无外网环境） |
+| `--branch` / `-Branch` | 拉取分支，默认 `main` |
+| `--proxy` / `-Proxy` | 下载走指定代理，如 `http://127.0.0.1:10808` |
+
+安装器只**检测** PHP 8.1+ 与 `pdo_mysql` / `openssl` / `mbstring` 扩展，缺失时给出安装命令并退出，不会修改系统依赖。
+
+升级：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JackHanXyz/Tarsk/main/install-online.sh | sudo bash -s -- --upgrade
+```
+
+```powershell
+& "$env:TEMP\tarsk-install.ps1" -Dir 'C:\Tarsk' -Upgrade
+```
+
+安装完成后也可在面板「版本更新」页检查 GitHub 最新提交并一键更新（自动备份旧代码，保留配置与数据）。
+
+### Windows 一键安装（本地脚本）
 
 ```powershell
 # 在项目根目录执行
@@ -112,6 +153,7 @@ Tarsk/
 │   ├── tasks.php           计划任务执行器（备份/切割/续期/巡检/命令）
 │   ├── security.php        登录失败封禁、IP 白名单匹配
 │   ├── notify.php          邮件 SMTP / Webhook 通知与资源告警
+│   ├── updater.php         在线升级：检查 GitHub 版本、下载覆盖与备份
 │   ├── ftpd.php            纯 PHP FTP 服务器核心
 │   ├── totp.php            RFC 6238 两步验证
 │   ├── plugins.php         插件扫描/路由/导航/启动钩子
@@ -134,6 +176,8 @@ Tarsk/
 ├── storage/                缓存、日志、证书、回收站、软件安装目录（运行时生成，已忽略）
 ├── install.ps1             Windows 一键安装
 ├── install.sh              Linux 一键安装
+├── install-online.ps1      Windows 云端安装 / 升级
+├── install-online.sh       Linux 云端安装 / 升级
 └── config.php              配置（安装时生成，已忽略）
 ```
 
