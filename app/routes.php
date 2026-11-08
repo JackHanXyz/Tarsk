@@ -44,6 +44,12 @@ return [
     ['POST', '/databases/backup', 'databases.php', 'databases_backup'],
     ['GET', '/databases/tables', 'databases.php', 'databases_tables'],
 
+    ['GET', '/backups', 'backups.php', 'backups_page'],
+    ['POST', '/backups/create', 'backups.php', 'backups_create'],
+    ['POST', '/backups/delete', 'backups.php', 'backups_delete'],
+    ['POST', '/backups/restore', 'backups.php', 'backups_restore'],
+    ['GET', '/backups/download', 'backups.php', 'backups_download'],
+
     ['GET', '/monitor', 'monitor.php', 'monitor_page'],
     ['GET', '/api/metrics', 'monitor.php', 'metrics_api'],
 
@@ -65,6 +71,7 @@ return [
     ['POST', '/ssl/generate', 'ssl.php', 'ssl_generate'],
     ['POST', '/ssl/upload', 'ssl.php', 'ssl_upload'],
     ['POST', '/ssl/letsencrypt', 'ssl.php', 'ssl_letsencrypt'],
+    ['POST', '/ssl/renew', 'ssl.php', 'ssl_renew'],
     ['POST', '/ssl/(\d+)/delete', 'ssl.php', 'ssl_delete'],
 
     ['GET', '/store', 'store.php', 'store_page'],

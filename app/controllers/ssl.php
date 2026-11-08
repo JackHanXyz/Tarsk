@@ -23,6 +23,8 @@ function ssl_page(): void
         'openssl_ext' => extension_loaded('openssl'),
         'openssl_cli' => command_exists('openssl'),
         'ssl_dir' => storage_path('ssl'),
+        'expiring' => certs_expiring((int)setting('cert_renew_days', '30')),
+        'renew_days' => (int)setting('cert_renew_days', '30'),
     ], 'app');
 }
 
@@ -230,6 +232,17 @@ function ssl_letsencrypt(): void
 
     log_action('签发 Let\'s Encrypt 证书', $domain);
     flash('success', 'Let\'s Encrypt 证书签发成功，已自动配置到站点（有效期至 ' . $result['expires'] . '）');
+    redirect('/ssl');
+}
+
+function ssl_renew(): void
+{
+    require_login();
+    @set_time_limit(300);
+
+    $result = task_cert_renew();
+    log_action('续期 Let\'s Encrypt 证书', $result['message'], $result['ok'] ? 'info' : 'warning');
+    flash($result['ok'] ? 'success' : 'warning', $result['message']);
     redirect('/ssl');
 }
 

@@ -10,6 +10,8 @@ function cron_page(): void
     foreach ($tasks as &$task) {
         $task['system_state'] = cron_system_state((int)$task['id']);
         $task['schedule_text'] = cron_schedule_text($task['schedule'], $task['run_time']);
+        $task['type_label'] = task_label($task);
+        $task['target_text'] = cron_target_text($task);
     }
     unset($task);
 
@@ -17,9 +19,35 @@ function cron_page(): void
         'title' => '计划任务',
         'active' => 'cron',
         'tasks' => $tasks,
+        'sites' => fetch_all('SELECT id, name, domain FROM ' . t('sites') . ' ORDER BY id DESC'),
+        'databases' => mysql_databases(),
+        'types' => task_types(),
         'scheduler' => PHP_OS_FAMILY === 'Windows' ? 'Windows 任务计划程序' : 'crontab',
         'command_exists' => PHP_OS_FAMILY === 'Windows' ? command_exists('schtasks') !== null : command_exists('crontab') !== null,
     ], 'app');
+}
+
+/**
+ * 任务目标的可读描述（站点名 / 数据库名 / 命令片段）
+ */
+function cron_target_text(array $task): string
+{
+    $payload = task_payload($task);
+    switch ((string)($task['type'] ?? 'command')) {
+        case 'site_backup':
+        case 'log_cut':
+            $siteId = (int)($payload['site_id'] ?? 0);
+            if ($siteId <= 0) {
+                return $siteId === 0 ? '全部站点' : '';
+            }
+            $site = fetch_one('SELECT name FROM ' . t('sites') . ' WHERE id = ?', [$siteId]);
+            return $site ? '站点 ' . $site['name'] : '站点已删除';
+        case 'db_backup':
+            return '数据库 ' . (string)($payload['db_name'] ?? '');
+        case 'command':
+        default:
+            return mb_substr((string)($payload['command'] ?? $task['command'] ?? ''), 0, 60);
+    }
 }
 
 function cron_create(): void
@@ -27,31 +55,64 @@ function cron_create(): void
     $name = trim((string)($_POST['name'] ?? ''));
     $schedule = (string)($_POST['schedule'] ?? 'daily');
     $runTime = trim((string)($_POST['run_time'] ?? '03:00'));
+    $type = (string)($_POST['type'] ?? 'command');
     $command = trim((string)($_POST['command'] ?? ''));
+    $siteId = (int)($_POST['site_id'] ?? 0);
+    $dbName = trim((string)($_POST['db_name'] ?? ''));
 
     $allowed = ['every_minute', 'every_5_minutes', 'hourly', 'daily', 'weekly', 'boot'];
     if (!in_array($schedule, $allowed, true)) {
         $schedule = 'daily';
     }
-    if ($name === '' || $command === '') {
-        flash('error', '任务名称与执行命令不能为空');
+    if ($name === '') {
+        flash('error', '任务名称不能为空');
         redirect('/cron');
     }
     if (!preg_match('/^[0-9]{1,2}:[0-9]{2}$/', $runTime)) {
         $runTime = '03:00';
     }
+    if (!array_key_exists($type, task_types())) {
+        $type = 'command';
+    }
+
+    $payload = [];
+    if ($type === 'command') {
+        if ($command === '') {
+            flash('error', '执行命令不能为空');
+            redirect('/cron');
+        }
+        $payload['command'] = $command;
+    } elseif ($type === 'site_backup') {
+        if ($siteId <= 0) {
+            flash('error', '请选择要备份的站点');
+            redirect('/cron');
+        }
+        $payload['site_id'] = $siteId;
+    } elseif ($type === 'db_backup') {
+        if ($dbName === '') {
+            flash('error', '请选择要备份的数据库');
+            redirect('/cron');
+        }
+        $payload['db_name'] = $dbName;
+    } elseif ($type === 'log_cut') {
+        $payload['site_id'] = $siteId;
+    }
 
     execute(
-        'INSERT INTO ' . t('cron') . ' (name, schedule, run_time, command, status, created_at) VALUES (?,?,?,?,?,?)',
-        [$name, $schedule, $runTime, $command, 'enabled', now()]
+        'INSERT INTO ' . t('cron') . ' (name, type, payload, schedule, run_time, command, status, created_at) VALUES (?,?,?,?,?,?,?,?)',
+        [$name, $type, json_encode($payload, JSON_UNESCAPED_UNICODE), $schedule, $runTime, $command !== '' ? $command : '-', 'enabled', now()]
     );
     $task = fetch_one('SELECT * FROM ' . t('cron') . ' ORDER BY id DESC LIMIT 1');
+    $trigger = task_command($task);
+    execute('UPDATE ' . t('cron') . ' SET command = ? WHERE id = ?', [$trigger, $task['id']]);
+    $task['command'] = $trigger;
+
     $result = cron_register($task);
     execute(
         'UPDATE ' . t('cron') . ' SET last_result = ? WHERE id = ?',
         [mb_substr($result['message'], 0, 255), $task['id']]
     );
-    log_action('创建计划任务', $name . ' · ' . cron_schedule_text($schedule, $runTime));
+    log_action('创建计划任务', $name . ' · ' . task_label($task) . ' · ' . cron_schedule_text($schedule, $runTime));
     flash($result['ok'] ? 'success' : 'warning', $result['message']);
     redirect('/cron');
 }
@@ -89,7 +150,13 @@ function cron_run(int $id): void
         redirect('/cron');
     }
 
-    if (PHP_OS_FAMILY === 'Windows') {
+    $type = (string)($task['type'] ?? 'command');
+    if ($type !== 'command') {
+        // 结构化任务（备份/切割/续期）直接同步执行，结果即时可见
+        $result = task_execute($task);
+        $ok = $result['ok'];
+        $message = $result['message'];
+    } elseif (PHP_OS_FAMILY === 'Windows') {
         $res = run_cmd('schtasks /Run /TN ' . escapeshellarg(cron_task_name($id)), 20);
         $ok = $res['code'] === 0;
         $message = $ok ? '已触发系统任务' : ('触发失败：' . ($res['error'] ?: '请以管理员身份运行'));

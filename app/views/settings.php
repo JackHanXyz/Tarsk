@@ -42,6 +42,16 @@ declare(strict_types=1);
             <span class="hint">修改后需重启 Redis</span>
           </div>
           <div class="field">
+            <label>备份保留份数</label>
+            <input class="input" type="number" name="backup_retention" min="1" max="60" value="<?= e($settings['backup_retention'] ?? '7') ?>">
+            <span class="hint">每类目标（单站点 / 单库）保留最近 N 份</span>
+          </div>
+          <div class="field">
+            <label>证书续期阈值（天）</label>
+            <input class="input" type="number" name="cert_renew_days" min="1" max="60" value="<?= e($settings['cert_renew_days'] ?? '30') ?>">
+            <span class="hint">剩余有效期低于该天数时自动续期</span>
+          </div>
+          <div class="field">
             <label>站点根目录</label>
             <input class="input mono" type="text" name="sites_root" value="<?= e($settings['sites_root'] ?? '') ?>" placeholder="<?= e($info['sites_root']) ?>">
             <span class="hint">留空自动使用 D:/wwwroot 或 storage/www</span>

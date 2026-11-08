@@ -97,6 +97,8 @@ function schema_statements(): array
             php_version VARCHAR(20) NOT NULL DEFAULT '',
             port INT UNSIGNED NOT NULL DEFAULT 80,
             rewrite VARCHAR(40) NOT NULL DEFAULT '',
+            proxy_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            proxy_pass VARCHAR(255) NOT NULL DEFAULT '',
             ssl_enabled TINYINT(1) NOT NULL DEFAULT 0,
             status ENUM('running','stopped') NOT NULL DEFAULT 'running',
             remark VARCHAR(255) NOT NULL DEFAULT '',
@@ -130,6 +132,8 @@ function schema_statements(): array
         "CREATE TABLE IF NOT EXISTS {$p}cron (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(120) NOT NULL,
+            type VARCHAR(32) NOT NULL DEFAULT 'command',
+            payload TEXT NULL,
             schedule ENUM('every_minute','every_5_minutes','hourly','daily','weekly','boot') NOT NULL DEFAULT 'daily',
             run_time VARCHAR(20) NOT NULL DEFAULT '03:00',
             command TEXT NOT NULL,
@@ -260,6 +264,10 @@ function migrate_schema(): void
 
     ensure_column('sites', 'rewrite', "VARCHAR(40) NOT NULL DEFAULT ''");
     ensure_column('sites', 'php_port', 'INT UNSIGNED NOT NULL DEFAULT 0');
+    ensure_column('sites', 'proxy_enabled', 'TINYINT(1) NOT NULL DEFAULT 0');
+    ensure_column('sites', 'proxy_pass', "VARCHAR(255) NOT NULL DEFAULT ''");
+    ensure_column('cron', 'type', "VARCHAR(32) NOT NULL DEFAULT 'command'");
+    ensure_column('cron', 'payload', 'TEXT NULL');
     ensure_column('users', 'totp_secret', "VARCHAR(64) NOT NULL DEFAULT ''");
     ensure_column('users', 'totp_enabled', 'TINYINT(1) NOT NULL DEFAULT 0');
     ensure_column('soft', 'port', 'INT UNSIGNED NOT NULL DEFAULT 0');
@@ -318,6 +326,8 @@ function seed_data(array $admin = []): void
         'ftp_port' => '2121',
         'panel_ssl_enabled' => '0',
         'panel_ssl_port' => '8443',
+        'backup_retention' => '7',
+        'cert_renew_days' => '30',
         'installed_at' => now(),
     ];
     foreach ($defaults as $key => $value) {

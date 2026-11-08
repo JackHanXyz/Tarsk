@@ -16,6 +16,7 @@ $navGroups = [
         ['key' => 'recycle', 'label' => '回收站', 'url' => '/recycle', 'icon' => 'trash'],
         ['key' => 'databases', 'label' => '数据库', 'url' => '/databases', 'icon' => 'database'],
         ['key' => 'monitor', 'label' => '监控', 'url' => '/monitor', 'icon' => 'activity'],
+        ['key' => 'backups', 'label' => '备份管理', 'url' => '/backups', 'icon' => 'save'],
         ['key' => 'cron', 'label' => '计划任务', 'url' => '/cron', 'icon' => 'clock'],
         ['key' => 'firewall', 'label' => '防火墙', 'url' => '/firewall', 'icon' => 'shield'],
         ['key' => 'docker', 'label' => 'Docker', 'url' => '/docker', 'icon' => 'box'],

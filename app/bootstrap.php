@@ -13,6 +13,8 @@ require_once __DIR__ . '/totp.php';
 require_once __DIR__ . '/plugins.php';
 require_once __DIR__ . '/panel_ssl.php';
 require_once __DIR__ . '/acme.php';
+require_once __DIR__ . '/backup.php';
+require_once __DIR__ . '/tasks.php';
 
 date_default_timezone_set((string)(config('app.timezone') ?: 'Asia/Shanghai'));
 
@@ -500,10 +502,10 @@ ensure_storage();
 /* --------------------------- 自动增量迁移 --------------------------- */
 
 try {
-    if ((int)setting('schema_version', '1') < 2) {
+    if ((int)setting('schema_version', '1') < 3) {
         install_schema();
         seed_data();
-        setting_set('schema_version', '2');
+        setting_set('schema_version', '3');
     }
 } catch (Throwable $e) {
     // 数据库未就绪时跳过，安装向导会再次执行

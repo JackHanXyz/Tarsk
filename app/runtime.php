@@ -701,6 +701,19 @@ function runtime_nginx_reload(): bool
     return $res['code'] === 0;
 }
 
+/**
+ * 重新打开日志文件（日志切割后调用，避免 Nginx 继续写已重命名的句柄）
+ */
+function runtime_nginx_reopen(): bool
+{
+    $root = managed_nginx_root();
+    if ($root === null || !is_file($root . '/logs/nginx.pid')) {
+        return false;
+    }
+    $res = ps_run('& \'' . $root . '/nginx.exe\' -p \'' . $root . '/\' -c conf/nginx.conf -s reopen 2>&1', 20);
+    return $res['code'] === 0;
+}
+
 function runtime_php_start(string $key = 'php'): array
 {
     $root = runtime_root($key);
@@ -709,15 +722,47 @@ function runtime_php_start(string $key = 'php'): array
     }
     $port = runtime_port($key);
     @mkdir($root . '/logs', 0777, true);
-    $cmd = 'start "tarsk-' . $key . '" /MIN /D ' . escapeshellarg($root)
-        . ' ' . escapeshellarg($root . '/php-cgi.exe')
-        . ' -b 127.0.0.1:' . $port
+    if (PHP_OS_FAMILY === 'Windows') {
+        // 使用 Start-Process 启动，进程与面板/父进程解耦，面板重启后 PHP-CGI 仍存活；
+        // 不要加输出重定向：目标日志被上一次进程占用会让 Start-Process 永久阻塞。
+        $script = sprintf(
+            "\$p = Start-Process -FilePath '%s' -ArgumentList @('-b','127.0.0.1:%d','-c','%s/php.ini')"
+            . " -WorkingDirectory '%s' -WindowStyle Hidden -PassThru\nStart-Sleep -Milliseconds 900\n\$p.Id",
+            $root . '/php-cgi.exe',
+            $port,
+            $root,
+            $root
+        );
+        $result = ps_run($script, 40);
+        $pid = 0;
+        foreach (preg_split('/\r?\n/', trim($result['output'])) as $line) {
+            if (ctype_digit(trim($line))) {
+                $pid = (int)trim($line);
+            }
+        }
+        usleep(400000);
+        if ($pid > 0 && runtime_pid_alive($pid)) {
+            $name = runtime_package($key)['name'] ?? 'PHP';
+            runtime_save_db($key, ['status' => 'running', 'pid' => $pid, 'port' => $port, 'version' => runtime_version($key)]);
+            return ['ok' => true, 'message' => $name . ' 已启动，监听 127.0.0.1:' . $port];
+        }
+        $found = runtime_find_pid_by_port($port);
+        if ($found > 0) {
+            $name = runtime_package($key)['name'] ?? 'PHP';
+            runtime_save_db($key, ['status' => 'running', 'pid' => $found, 'port' => $port, 'version' => runtime_version($key)]);
+            return ['ok' => true, 'message' => $name . ' 已启动，监听 127.0.0.1:' . $port];
+        }
+        $tail = runtime_log_tail($key, 10);
+        return ['ok' => false, 'message' => 'PHP-CGI 启动失败' . ($tail !== '' ? '：' . $tail : '，请检查 php.ini 与 VC 运行库')];
+    }
+
+    $cmd = escapeshellarg($root . '/php-cgi.exe') . ' -b 127.0.0.1:' . $port
         . ' -c ' . escapeshellarg($root . '/php.ini');
-    pclose(popen($cmd, 'r'));
+    pclose(popen($cmd . ' > /dev/null 2>&1 &', 'r'));
     usleep(1200000);
     $pid = runtime_find_pid_by_port($port);
     if ($pid <= 0) {
-        return ['ok' => false, 'message' => 'PHP-CGI 启动失败：端口 ' . $port . ' 未开始监听，请检查 php.ini 与 VC 运行库'];
+        return ['ok' => false, 'message' => 'PHP-CGI 启动失败：端口 ' . $port . ' 未开始监听'];
     }
     $name = runtime_package($key)['name'] ?? 'PHP';
     runtime_save_db($key, ['status' => 'running', 'pid' => $pid, 'port' => $port, 'version' => runtime_version($key)]);

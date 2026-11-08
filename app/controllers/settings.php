@@ -59,6 +59,8 @@ function settings_save(): void
         'nginx_port' => fn($v) => max(1, min(65535, (int)$v)),
         'php_port' => fn($v) => max(1, min(65535, (int)$v)),
         'redis_port' => fn($v) => max(1, min(65535, (int)$v)),
+        'backup_retention' => fn($v) => max(1, min(60, (int)$v)),
+        'cert_renew_days' => fn($v) => max(1, min(60, (int)$v)),
     ];
     foreach ($fields as $key => $sanitize) {
         if (array_key_exists($key, $_POST)) {

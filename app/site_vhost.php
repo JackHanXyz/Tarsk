@@ -107,12 +107,31 @@ function site_rewrite_rules(string $preset): array
     }
 }
 
+/**
+ * 反向代理目标：仅在启用时返回规范化 URL，非法输入返回空串
+ */
+function site_proxy_target(array $site): string
+{
+    if (empty($site['proxy_enabled'])) {
+        return '';
+    }
+    $target = trim((string)($site['proxy_pass'] ?? ''));
+    if ($target === '') {
+        return '';
+    }
+    if (!preg_match('#^https?://[A-Za-z0-9._\-]+(:\d+)?(/?[^\s;{}]*)?$#', $target)) {
+        return '';
+    }
+    return rtrim($target, '/') ?: $target;
+}
+
 function site_vhost_content(array $site): string
 {
     $serverName = ($site['domain'] ?? '') !== '' ? $site['domain'] : $site['name'] . '.local';
     $path = str_replace('\\', '/', (string)$site['path']);
     $port = site_effective_port($site);
     $phpPort = site_php_port($site);
+    $proxy = site_proxy_target($site);
 
     $lines = [
         '# 由 Tarsk 自动生成 · ' . date('Y-m-d H:i:s'),
@@ -125,17 +144,30 @@ function site_vhost_content(array $site): string
         '',
         '    location / {',
     ];
-    foreach (site_rewrite_rules((string)($site['rewrite'] ?? '')) as $rule) {
-        $lines[] = '        ' . $rule;
+    if ($proxy !== '') {
+        $lines[] = '        proxy_pass ' . $proxy . ';';
+        $lines[] = '        proxy_set_header Host $host;';
+        $lines[] = '        proxy_set_header X-Real-IP $remote_addr;';
+        $lines[] = '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;';
+        $lines[] = '        proxy_set_header X-Forwarded-Proto $scheme;';
+        $lines[] = '        proxy_http_version 1.1;';
+        $lines[] = '        proxy_read_timeout 300s;';
+        $lines[] = '        proxy_send_timeout 300s;';
+    } else {
+        foreach (site_rewrite_rules((string)($site['rewrite'] ?? '')) as $rule) {
+            $lines[] = '        ' . $rule;
+        }
     }
     $lines[] = '    }';
-    $lines[] = '';
-    $lines[] = '    location ~ \\.php$ {';
-    $lines[] = '        fastcgi_pass 127.0.0.1:' . $phpPort . ';';
-    $lines[] = '        fastcgi_index index.php;';
-    $lines[] = '        include fastcgi_params;';
-    $lines[] = '        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;';
-    $lines[] = '    }';
+    if ($proxy === '') {
+        $lines[] = '';
+        $lines[] = '    location ~ \\.php$ {';
+        $lines[] = '        fastcgi_pass 127.0.0.1:' . $phpPort . ';';
+        $lines[] = '        fastcgi_index index.php;';
+        $lines[] = '        include fastcgi_params;';
+        $lines[] = '        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;';
+        $lines[] = '    }';
+    }
     $lines[] = '';
     $lines[] = '    access_log logs/' . $site['name'] . '.log;';
     $lines[] = '}';
@@ -155,7 +187,18 @@ function site_vhost_content(array $site): string
             $lines[] = '    ssl_certificate "' . str_replace('\\', '/', (string)$cert['cert_path']) . '";';
             $lines[] = '    ssl_certificate_key "' . str_replace('\\', '/', (string)$cert['key_path']) . '";';
             $lines[] = '    ssl_protocols TLSv1.2 TLSv1.3;';
-            $lines[] = '    location / { try_files $uri $uri/ /index.html; }';
+            if ($proxy !== '') {
+                $lines[] = '    location / {';
+                $lines[] = '        proxy_pass ' . $proxy . ';';
+                $lines[] = '        proxy_set_header Host $host;';
+                $lines[] = '        proxy_set_header X-Real-IP $remote_addr;';
+                $lines[] = '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;';
+                $lines[] = '        proxy_set_header X-Forwarded-Proto $scheme;';
+                $lines[] = '    }';
+                $lines[] = '    access_log logs/' . $site['name'] . '.log;';
+            } else {
+                $lines[] = '    location / { try_files $uri $uri/ /index.html; }';
+            }
             $lines[] = '}';
         }
     }

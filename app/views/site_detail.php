@@ -73,21 +73,61 @@ declare(strict_types=1);
 
   <article class="card">
     <div class="card__head">
-      <span class="card__title"><?= icon('globe', 17) ?>运行信息</span>
-      <a class="badge badge--info" href="<?= url('/ssl') ?>">SSL 证书</a>
+      <span class="card__title"><?= icon('globe', 17) ?>反向代理</span>
+      <?php if (!empty($site['proxy_enabled'])): ?><span class="badge badge--ok"><i></i>已启用</span><?php endif; ?>
     </div>
-    <div class="card__body">
-      <dl class="kv">
-        <dt>运行目录</dt><dd class="mono"><?= e($site['path']) ?></dd>
-        <dt>目录大小</dt><dd><?= is_dir((string)$site['path']) ? bytes(dir_size((string)$site['path'])) : '目录缺失' ?></dd>
-        <dt>访问端口</dt><dd class="mono"><?= (int)$effective_port ?></dd>
-        <dt>Nginx 配置</dt><dd class="mono small"><?= e($conf_path) ?></dd>
-        <dt>访问日志</dt><dd class="mono small"><?= e($log_path ?: '未启用') ?></dd>
-        <dt>创建时间</dt><dd><?= e(date('Y-m-d H:i', strtotime($site['created_at']))) ?></dd>
-        <dt>HTTPS</dt><dd><?= $site['ssl_enabled'] ? '已启用' : '未启用' ?></dd>
-      </dl>
-    </div>
+    <form method="post" action="<?= url('/sites/' . (int)$site['id'] . '/update') ?>">
+      <?= csrf_field() ?>
+      <input type="hidden" name="domain" value="<?= e($site['domain']) ?>">
+      <input type="hidden" name="php_version" value="<?= e($site['php_version']) ?>">
+      <input type="hidden" name="rewrite" value="<?= e($site['rewrite']) ?>">
+      <input type="hidden" name="remark" value="<?= e($site['remark']) ?>">
+      <input type="hidden" name="status" value="<?= e($site['status']) ?>">
+      <div class="card__body">
+        <div class="form-grid">
+          <div class="field span-2">
+            <label>代理目标地址</label>
+            <input class="input mono" type="text" name="proxy_pass" value="<?= e($site['proxy_pass'] ?? '') ?>" placeholder="http://127.0.0.1:3000">
+            <span class="hint">支持 http:// 或 https:// 开头的主机:端口，可带路径前缀。启用后站点不再走 PHP，全部请求转发到该地址。</span>
+          </div>
+          <div class="field span-2">
+            <label class="checkbox">
+              <input type="checkbox" name="proxy_enabled" value="1" <?= !empty($site['proxy_enabled']) ? 'checked' : '' ?>>
+              启用反向代理
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="card__foot" style="display:flex;justify-content:flex-end">
+        <button class="btn btn--primary" type="submit"><?= icon('save', 14) ?>保存代理配置</button>
+      </div>
+    </form>
   </article>
+</section>
+
+<?php if (!empty($site['proxy_enabled'])): ?>
+<div class="alert alert--info mt-18">
+  <?= icon('zap', 16) ?>
+  <span>反向代理已启用，当前请求转发至 <code class="mono"><?= e($site['proxy_pass']) ?></code>。若目标服务未运行，站点会返回 502。</span>
+</div>
+<?php endif; ?>
+
+<section class="card mt-18">
+  <div class="card__head">
+    <span class="card__title"><?= icon('globe', 17) ?>运行信息</span>
+    <a class="badge badge--info" href="<?= url('/ssl') ?>">SSL 证书</a>
+  </div>
+  <div class="card__body">
+    <dl class="kv">
+      <dt>运行目录</dt><dd class="mono"><?= e($site['path']) ?></dd>
+      <dt>目录大小</dt><dd><?= is_dir((string)$site['path']) ? bytes(dir_size((string)$site['path'])) : '目录缺失' ?></dd>
+      <dt>访问端口</dt><dd class="mono"><?= (int)$effective_port ?></dd>
+      <dt>Nginx 配置</dt><dd class="mono small"><?= e($conf_path) ?></dd>
+      <dt>访问日志</dt><dd class="mono small"><?= e($log_path ?: '未启用') ?></dd>
+      <dt>创建时间</dt><dd><?= e(date('Y-m-d H:i', strtotime($site['created_at']))) ?></dd>
+      <dt>HTTPS</dt><dd><?= $site['ssl_enabled'] ? '已启用' : '未启用' ?></dd>
+    </dl>
+  </div>
 </section>
 
 <?php if ($databases): ?>

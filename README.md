@@ -14,6 +14,7 @@ Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔�
 ### 站点
 - 一键创建运行目录、默认首页、Nginx vhost，可选 **同时创建 MySQL 数据库**。
 - **伪静态预设**：WordPress / Laravel / ThinkPHP / Discuz! / DedeCMS。
+- **反向代理**：站点一键反代到 `http://127.0.0.1:3000` 等本地服务（自动附带 Host / X-Forwarded-* 头），也可与 HTTPS 同时生效。
 - **按站点切换 PHP 版本**：站点详情页选择已安装的托管版本，保存即自动启动并切换 FastCGI 通道。
 - 站点详情页：修改域名、伪静态、状态，实时预览 vhost、查看访问日志、关联数据库与证书。
 - 托管模式下保存即自动 `nginx -s reload`。
@@ -21,13 +22,14 @@ Tarsk 是使用 PHP + MySQL 编写的服务器管理面板，目标是对宝塔�
 ### 运维
 - **文件管理**：浏览、新建目录/文件、在线编辑、上传、下载、重命名、删除，路径穿越防护。
 - **回收站**：删除的文件先移入回收站，可还原、彻底删除或一键清空（可在设置中关闭）。
+- **备份管理**：站点目录打包为 zip（PHP zip 扩展或系统 bsdtar）、数据库 mysqldump 导出，支持下载、删除、一键恢复，按「目标」保留最近 N 份。
 - **一键部署**：WordPress 自动下载、解压、建库并写入 `wp-config.php`（含随机安全盐），打开站点即可完成安装向导。
 - **数据库**：浏览库表、创建/删除数据库、mysqldump 备份、导入 root 账号解锁完整权限。
 - **监控**：真实 CPU / 内存 / 磁盘 / 网卡采样，30 秒入库，24 小时曲线。
-- **计划任务**：Windows `schtasks` / Linux `crontab` 注册、启停、立即执行。
+- **计划任务**：Windows `schtasks` / Linux `crontab` 注册、启停、立即执行；内置「站点备份 / 数据库备份 / 日志切割 / 证书续期」四类任务模板，也可执行自定义命令。
 - **防火墙**：读取系统配置，写入/移除 Tarsk 规则（需管理员权限）。
 - **Docker**：容器/镜像列表、启停、重启、删除、`docker run`。
-- **SSL 证书**：OpenSSL 自签（含 SAN）、PEM 导入、**Let's Encrypt 免费证书自动签发（ACME v2 / HTTP-01，纯 PHP 实现）**、到期提醒、自动写入 HTTPS vhost。
+- **SSL 证书**：OpenSSL 自签（含 SAN）、PEM 导入、**Let's Encrypt 免费证书自动签发（ACME v2 / HTTP-01，纯 PHP 实现）与到期自动续期**（剩余天数低于阈值时重签并回写 vhost）、到期提醒。
 - **面板 SSL**：一键由托管 Nginx 以 HTTPS 反向代理面板（自签证书，可换正式证书）。
 - **FTP 服务**：内置纯 PHP FTP 服务器（stream_select 多客户端、被动模式、账号主目录隔离），账号 CRUD 与一键启停。
 - **插件市场**：本地插件目录（`app/plugins`）安装/启停/卸载，插件可注册路由与左侧导航，内置示例插件与 IP 黑名单插件（支持 `1.2.3.*` 通配，实时生效）。
@@ -104,6 +106,8 @@ Tarsk/
 │   ├── runtime.php         Nginx / 多版本 PHP / Redis 下载安装与进程管理
 │   ├── site_vhost.php      站点 vhost 生成、伪静态、按站点 PHP 版本
 │   ├── acme.php            Let's Encrypt ACME v2 客户端（纯 PHP）
+│   ├── backup.php          站点/数据库备份、恢复与保留策略
+│   ├── tasks.php           计划任务执行器（备份/切割/续期/命令）
 │   ├── ftpd.php            纯 PHP FTP 服务器核心
 │   ├── totp.php            RFC 6238 两步验证
 │   ├── plugins.php         插件扫描/路由/导航/启动钩子
@@ -116,6 +120,7 @@ Tarsk/
 │   ├── configure.php       命令行配置 + 初始化
 │   ├── install.php         CLI 初始化（使用已有 config）
 │   ├── ftpd.php            FTP 守护进程入口
+│   ├── task.php            计划任务 CLI 入口（php bin/task.php --id=N）
 │   └── reset-password.php  重置管理员密码
 ├── public/
 │   ├── index.php           入口（安全入口检查、插件路由合并）

@@ -193,18 +193,24 @@ function sites_update(int $id): void
     $rewrite = (string)($_POST['rewrite'] ?? '');
     $remark = trim((string)($_POST['remark'] ?? ''));
     $status = (string)($_POST['status'] ?? $site['status']);
+    $proxyEnabled = !empty($_POST['proxy_enabled']) ? 1 : 0;
+    $proxyPass = trim((string)($_POST['proxy_pass'] ?? ''));
     if (!array_key_exists($rewrite, site_rewrite_presets())) {
         $rewrite = '';
     }
     if (!in_array($status, ['running', 'stopped'], true)) {
         $status = 'running';
     }
+    if ($proxyEnabled && site_proxy_target(['proxy_enabled' => 1, 'proxy_pass' => $proxyPass]) === '') {
+        flash('error', '反向代理地址格式不合法，应形如 http://127.0.0.1:3000');
+        redirect('/sites/' . $id);
+    }
     $notes = [];
     $php = sites_resolve_php($php, $notes);
 
     execute(
-        'UPDATE ' . t('sites') . ' SET domain = ?, php_version = ?, rewrite = ?, remark = ?, status = ? WHERE id = ?',
-        [$domain, $php, $rewrite, $remark, $status, $id]
+        'UPDATE ' . t('sites') . ' SET domain = ?, php_version = ?, rewrite = ?, remark = ?, status = ?, proxy_enabled = ?, proxy_pass = ? WHERE id = ?',
+        [$domain, $php, $rewrite, $remark, $status, $proxyEnabled, $proxyPass, $id]
     );
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
 

@@ -8,10 +8,23 @@ declare(strict_types=1);
   </div>
   <div class="toolbar">
     <button class="btn btn--ghost btn--sm" data-open="sslUpload"><?= icon('upload', 14) ?>导入证书</button>
+    <form method="post" action="<?= url('/ssl/renew') ?>" data-confirm="将检查并续期剩余不足 <?= (int)$renew_days ?> 天的 Let's Encrypt 证书，确定继续？">
+      <?= csrf_field() ?>
+      <button class="btn btn--ghost btn--sm" type="submit"><?= icon('refresh', 14) ?>续期证书</button>
+    </form>
     <button class="btn btn--ghost btn--sm" data-open="sslLetsencrypt"><?= icon('zap', 14) ?>Let's Encrypt</button>
     <button class="btn btn--primary btn--sm" data-open="sslGenerate" <?= $openssl_ext ? '' : 'disabled' ?>><?= icon('lock', 14) ?>签发证书</button>
   </div>
 </div>
+
+<?php if ($expiring): ?>
+  <div class="alert alert--warning">
+    <?= icon('alert', 16) ?>
+    <span>有 <?= count($expiring) ?> 张 Let's Encrypt 证书将在 <?= (int)$renew_days ?> 天内到期：
+      <?= e(implode('、', array_map(fn($c) => $c['domain'] . '（剩余 ' . $c['days_left'] . ' 天）', $expiring))) ?>。
+      可点击「续期证书」立即续签，或在计划任务中配置自动续期。</span>
+  </div>
+<?php endif; ?>
 
 <dialog class="modal" id="sslLetsencrypt">
   <form method="post" action="<?= url('/ssl/letsencrypt') ?>" data-busy>
