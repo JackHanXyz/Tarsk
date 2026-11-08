@@ -125,82 +125,160 @@ function site_proxy_target(array $site): string
     return rtrim($target, '/') ?: $target;
 }
 
+/**
+ * 站点绑定的全部域名（主域名 + 附加域名），去重并过滤非法项
+ */
+function site_server_names(array $site): string
+{
+    $names = [];
+    $primary = trim((string)($site['domain'] ?? ''));
+    if ($primary !== '') {
+        $names[] = $primary;
+    }
+    $extra = str_replace(["\r\n", "\r", "\n", ','], ' ', (string)($site['domains'] ?? ''));
+    foreach (preg_split('/\s+/', trim($extra)) as $item) {
+        $item = trim($item);
+        if ($item !== '' && preg_match('/^[A-Za-z0-9][A-Za-z0-9.\-]{1,190}$/', $item)) {
+            $names[] = $item;
+        }
+    }
+    $names = array_values(array_unique($names));
+    return $names ? implode(' ', $names) : ($site['name'] . '.local');
+}
+
+/**
+ * 站点默认文档
+ */
+function site_index_files(array $site): string
+{
+    $raw = trim((string)($site['index_files'] ?? ''));
+    $files = [];
+    foreach (preg_split('/\s+/', $raw) as $item) {
+        $item = trim($item);
+        if ($item !== '' && preg_match('/^[A-Za-z0-9._\-]+$/', $item)) {
+            $files[] = $item;
+        }
+    }
+    return $files ? implode(' ', array_slice(array_unique($files), 0, 6)) : 'index.html index.htm index.php';
+}
+
 function site_vhost_content(array $site): string
 {
-    $serverName = ($site['domain'] ?? '') !== '' ? $site['domain'] : $site['name'] . '.local';
+    $serverNames = site_server_names($site);
     $path = str_replace('\\', '/', (string)$site['path']);
     $port = site_effective_port($site);
     $phpPort = site_php_port($site);
     $proxy = site_proxy_target($site);
+    $index = site_index_files($site);
 
-    $lines = [
-        '# 由 Tarsk 自动生成 · ' . date('Y-m-d H:i:s'),
-        'server {',
-        '    listen ' . $port . ';',
-        '    server_name ' . $serverName . ';',
-        '    root "' . $path . '";',
-        '    index index.html index.htm index.php;',
-        '    client_max_body_size 64m;',
-        '',
-        '    location / {',
-    ];
-    if ($proxy !== '') {
-        $lines[] = '        proxy_pass ' . $proxy . ';';
-        $lines[] = '        proxy_set_header Host $host;';
-        $lines[] = '        proxy_set_header X-Real-IP $remote_addr;';
-        $lines[] = '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;';
-        $lines[] = '        proxy_set_header X-Forwarded-Proto $scheme;';
-        $lines[] = '        proxy_http_version 1.1;';
-        $lines[] = '        proxy_read_timeout 300s;';
-        $lines[] = '        proxy_send_timeout 300s;';
-    } else {
-        foreach (site_rewrite_rules((string)($site['rewrite'] ?? '')) as $rule) {
-            $lines[] = '        ' . $rule;
-        }
-    }
-    $lines[] = '    }';
-    if ($proxy === '') {
-        $lines[] = '';
-        $lines[] = '    location ~ \\.php$ {';
-        $lines[] = '        fastcgi_pass 127.0.0.1:' . $phpPort . ';';
-        $lines[] = '        fastcgi_index index.php;';
-        $lines[] = '        include fastcgi_params;';
-        $lines[] = '        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;';
-        $lines[] = '    }';
-    }
-    $lines[] = '';
-    $lines[] = '    access_log logs/' . $site['name'] . '.log;';
-    $lines[] = '}';
-
+    $cert = null;
     if (!empty($site['ssl_enabled'])) {
         $cert = fetch_one(
             'SELECT * FROM ' . t('certs') . ' WHERE site_id = ? ORDER BY id DESC LIMIT 1',
             [$site['id']]
         );
-        if ($cert && is_file((string)$cert['cert_path'])) {
-            $lines[] = '';
-            $lines[] = 'server {';
-            $lines[] = '    listen 443 ssl;';
-            $lines[] = '    server_name ' . $serverName . ';';
-            $lines[] = '    root "' . $path . '";';
-            $lines[] = '    index index.html index.htm index.php;';
-            $lines[] = '    ssl_certificate "' . str_replace('\\', '/', (string)$cert['cert_path']) . '";';
-            $lines[] = '    ssl_certificate_key "' . str_replace('\\', '/', (string)$cert['key_path']) . '";';
-            $lines[] = '    ssl_protocols TLSv1.2 TLSv1.3;';
-            if ($proxy !== '') {
-                $lines[] = '    location / {';
-                $lines[] = '        proxy_pass ' . $proxy . ';';
-                $lines[] = '        proxy_set_header Host $host;';
-                $lines[] = '        proxy_set_header X-Real-IP $remote_addr;';
-                $lines[] = '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;';
-                $lines[] = '        proxy_set_header X-Forwarded-Proto $scheme;';
-                $lines[] = '    }';
-                $lines[] = '    access_log logs/' . $site['name'] . '.log;';
-            } else {
-                $lines[] = '    location / { try_files $uri $uri/ /index.html; }';
+    }
+    // 没有可用证书时不强制跳转，避免把自己 301 到不存在的 443
+    $forceHttps = !empty($site['force_https']) && $cert && is_file((string)$cert['cert_path']);
+
+    $lines = [
+        '# 由 Tarsk 自动生成 · ' . date('Y-m-d H:i:s'),
+        'server {',
+        '    listen ' . $port . ';',
+        '    server_name ' . $serverNames . ';',
+        '    root "' . $path . '";',
+        '    index ' . $index . ';',
+        '    client_max_body_size 64m;',
+    ];
+
+    if ($forceHttps) {
+        $lines[] = '';
+        $lines[] = '    return 301 https://$host$request_uri;';
+        $lines[] = '}';
+    } else {
+        $lines[] = '';
+        $lines[] = '    location / {';
+        if ($proxy !== '') {
+            $lines[] = '        proxy_pass ' . $proxy . ';';
+            $lines[] = '        proxy_set_header Host $host;';
+            $lines[] = '        proxy_set_header X-Real-IP $remote_addr;';
+            $lines[] = '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;';
+            $lines[] = '        proxy_set_header X-Forwarded-Proto $scheme;';
+            $lines[] = '        proxy_http_version 1.1;';
+            $lines[] = '        proxy_read_timeout 300s;';
+            $lines[] = '        proxy_send_timeout 300s;';
+        } else {
+            foreach (site_rewrite_rules((string)($site['rewrite'] ?? '')) as $rule) {
+                $lines[] = '        ' . $rule;
             }
-            $lines[] = '}';
         }
+        $lines[] = '    }';
+
+        if (!empty($site['anti_leech'])) {
+            $lines[] = '';
+            $lines[] = '    location ~* \\.(gif|jpg|jpeg|png|webp|bmp|swf|flv|mp4|mp3|zip|rar)$ {';
+            $lines[] = '        valid_referers none blocked server_names;';
+            $lines[] = '        if ($invalid_referer) {';
+            $lines[] = '            return 403;';
+            $lines[] = '        }';
+            $lines[] = '        expires 30d;';
+            $lines[] = '    }';
+        }
+
+        if ($proxy === '') {
+            $lines[] = '';
+            $lines[] = '    location ~ \\.php$ {';
+            $lines[] = '        fastcgi_pass 127.0.0.1:' . $phpPort . ';';
+            $lines[] = '        fastcgi_index index.php;';
+            $lines[] = '        include fastcgi_params;';
+            $lines[] = '        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;';
+            if (!empty($site['open_basedir'])) {
+                $lines[] = '        fastcgi_param PHP_ADMIN_VALUE "open_basedir=' . $path . '/;' . storage_path('tmp') . '/";';
+            }
+            $lines[] = '    }';
+        }
+        $lines[] = '';
+        $lines[] = '    access_log logs/' . $site['name'] . '.log;';
+        $lines[] = '}';
+    }
+
+    if ($cert && is_file((string)$cert['cert_path'])) {
+        $lines[] = '';
+        $lines[] = 'server {';
+        $lines[] = '    listen 443 ssl;';
+        $lines[] = '    server_name ' . $serverNames . ';';
+        $lines[] = '    root "' . $path . '";';
+        $lines[] = '    index ' . $index . ';';
+        $lines[] = '    ssl_certificate "' . str_replace('\\', '/', (string)$cert['cert_path']) . '";';
+        $lines[] = '    ssl_certificate_key "' . str_replace('\\', '/', (string)$cert['key_path']) . '";';
+        $lines[] = '    ssl_protocols TLSv1.2 TLSv1.3;';
+        if ($proxy !== '') {
+            $lines[] = '    location / {';
+            $lines[] = '        proxy_pass ' . $proxy . ';';
+            $lines[] = '        proxy_set_header Host $host;';
+            $lines[] = '        proxy_set_header X-Real-IP $remote_addr;';
+            $lines[] = '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;';
+            $lines[] = '        proxy_set_header X-Forwarded-Proto $scheme;';
+            $lines[] = '    }';
+        } else {
+            $lines[] = '    location / {';
+            foreach (site_rewrite_rules((string)($site['rewrite'] ?? '')) as $rule) {
+                $lines[] = '        ' . $rule;
+            }
+            $lines[] = '    }';
+            $lines[] = '';
+            $lines[] = '    location ~ \\.php$ {';
+            $lines[] = '        fastcgi_pass 127.0.0.1:' . $phpPort . ';';
+            $lines[] = '        fastcgi_index index.php;';
+            $lines[] = '        include fastcgi_params;';
+            $lines[] = '        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;';
+            if (!empty($site['open_basedir'])) {
+                $lines[] = '        fastcgi_param PHP_ADMIN_VALUE "open_basedir=' . $path . '/;' . storage_path('tmp') . '/";';
+            }
+            $lines[] = '    }';
+        }
+        $lines[] = '    access_log logs/' . $site['name'] . '.log;';
+        $lines[] = '}';
     }
 
     $lines[] = '';

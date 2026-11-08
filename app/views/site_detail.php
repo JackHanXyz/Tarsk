@@ -29,7 +29,7 @@ declare(strict_types=1);
       <div class="card__body">
         <div class="form-grid">
           <div class="field">
-            <label>绑定域名</label>
+            <label>主域名</label>
             <input class="input" type="text" name="domain" value="<?= e($site['domain']) ?>" placeholder="example.com">
           </div>
           <div class="field">
@@ -38,6 +38,11 @@ declare(strict_types=1);
               <option value="running" <?= $site['status'] === 'running' ? 'selected' : '' ?>>运行中</option>
               <option value="stopped" <?= $site['status'] === 'stopped' ? 'selected' : '' ?>>已停止</option>
             </select>
+          </div>
+          <div class="field span-2">
+            <label>附加域名</label>
+            <textarea class="input mono" name="domains" rows="2" placeholder="www.example.com, example.net"><?= e($site['domains'] ?? '') ?></textarea>
+            <span class="hint">每行一个或逗号分隔，全部写入 server_name（不包含主域名本身）。</span>
           </div>
           <div class="field">
             <label>PHP 版本</label>
@@ -58,9 +63,38 @@ declare(strict_types=1);
               <?php endforeach; ?>
             </select>
           </div>
-          <div class="field span-2">
+          <div class="field">
+            <label>默认文档</label>
+            <input class="input mono" type="text" name="index_files" value="<?= e($site['index_files'] ?? 'index.html index.htm index.php') ?>" placeholder="index.html index.php">
+            <span class="hint">空格分隔，最多 6 个</span>
+          </div>
+          <div class="field">
             <label>备注</label>
             <input class="input" type="text" name="remark" value="<?= e($site['remark']) ?>" placeholder="可选">
+          </div>
+          <div class="field span-2">
+            <label>高级选项</label>
+            <label class="checkbox">
+              <input type="checkbox" name="force_https" value="1" <?= !empty($site['force_https']) ? 'checked' : '' ?>>
+              强制 HTTPS（HTTP 请求 301 跳转，需已启用证书）
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" name="anti_leech" value="1" <?= !empty($site['anti_leech']) ? 'checked' : '' ?>>
+              防盗链（图片/视频/压缩包仅允许本站 Referer 访问）
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" name="open_basedir" value="1" <?= !empty($site['open_basedir']) ? 'checked' : '' ?>>
+              防跨站 open_basedir（限制 PHP 只能访问站点目录与临时目录）
+            </label>
+          </div>
+          <div class="field span-2">
+            <label>反向代理目标</label>
+            <input class="input mono" type="text" name="proxy_pass" value="<?= e($site['proxy_pass'] ?? '') ?>" placeholder="http://127.0.0.1:3000">
+            <span class="hint">支持 http:// 或 https:// 开头的主机:端口，可带路径前缀。启用后站点不再走 PHP。</span>
+            <label class="checkbox mt-12">
+              <input type="checkbox" name="proxy_enabled" value="1" <?= !empty($site['proxy_enabled']) ? 'checked' : '' ?>>
+              启用反向代理
+            </label>
           </div>
         </div>
         <p class="hint mt-12">保存后会立即重写 Nginx 配置；托管模式下会自动 reload，无需手动操作。</p>
@@ -73,35 +107,21 @@ declare(strict_types=1);
 
   <article class="card">
     <div class="card__head">
-      <span class="card__title"><?= icon('globe', 17) ?>反向代理</span>
-      <?php if (!empty($site['proxy_enabled'])): ?><span class="badge badge--ok"><i></i>已启用</span><?php endif; ?>
+      <span class="card__title"><?= icon('globe', 17) ?>运行信息</span>
+      <a class="badge badge--info" href="<?= url('/ssl') ?>">SSL 证书</a>
     </div>
-    <form method="post" action="<?= url('/sites/' . (int)$site['id'] . '/update') ?>">
-      <?= csrf_field() ?>
-      <input type="hidden" name="domain" value="<?= e($site['domain']) ?>">
-      <input type="hidden" name="php_version" value="<?= e($site['php_version']) ?>">
-      <input type="hidden" name="rewrite" value="<?= e($site['rewrite']) ?>">
-      <input type="hidden" name="remark" value="<?= e($site['remark']) ?>">
-      <input type="hidden" name="status" value="<?= e($site['status']) ?>">
-      <div class="card__body">
-        <div class="form-grid">
-          <div class="field span-2">
-            <label>代理目标地址</label>
-            <input class="input mono" type="text" name="proxy_pass" value="<?= e($site['proxy_pass'] ?? '') ?>" placeholder="http://127.0.0.1:3000">
-            <span class="hint">支持 http:// 或 https:// 开头的主机:端口，可带路径前缀。启用后站点不再走 PHP，全部请求转发到该地址。</span>
-          </div>
-          <div class="field span-2">
-            <label class="checkbox">
-              <input type="checkbox" name="proxy_enabled" value="1" <?= !empty($site['proxy_enabled']) ? 'checked' : '' ?>>
-              启用反向代理
-            </label>
-          </div>
-        </div>
-      </div>
-      <div class="card__foot" style="display:flex;justify-content:flex-end">
-        <button class="btn btn--primary" type="submit"><?= icon('save', 14) ?>保存代理配置</button>
-      </div>
-    </form>
+    <div class="card__body">
+      <dl class="kv">
+        <dt>运行目录</dt><dd class="mono"><?= e($site['path']) ?></dd>
+        <dt>目录大小</dt><dd><?= is_dir((string)$site['path']) ? bytes(dir_size((string)$site['path'])) : '目录缺失' ?></dd>
+        <dt>访问端口</dt><dd class="mono"><?= (int)$effective_port ?></dd>
+        <dt>绑定域名</dt><dd class="mono small"><?= e(site_server_names($site)) ?></dd>
+        <dt>Nginx 配置</dt><dd class="mono small"><?= e($conf_path) ?></dd>
+        <dt>访问日志</dt><dd class="mono small"><?= e($log_path ?: '未启用') ?></dd>
+        <dt>创建时间</dt><dd><?= e(date('Y-m-d H:i', strtotime($site['created_at']))) ?></dd>
+        <dt>HTTPS</dt><dd><?= $site['ssl_enabled'] ? '已启用' : '未启用' ?><?= !empty($site['force_https']) && $site['ssl_enabled'] ? ' · 强制跳转' : '' ?></dd>
+      </dl>
+    </div>
   </article>
 </section>
 
@@ -111,24 +131,6 @@ declare(strict_types=1);
   <span>反向代理已启用，当前请求转发至 <code class="mono"><?= e($site['proxy_pass']) ?></code>。若目标服务未运行，站点会返回 502。</span>
 </div>
 <?php endif; ?>
-
-<section class="card mt-18">
-  <div class="card__head">
-    <span class="card__title"><?= icon('globe', 17) ?>运行信息</span>
-    <a class="badge badge--info" href="<?= url('/ssl') ?>">SSL 证书</a>
-  </div>
-  <div class="card__body">
-    <dl class="kv">
-      <dt>运行目录</dt><dd class="mono"><?= e($site['path']) ?></dd>
-      <dt>目录大小</dt><dd><?= is_dir((string)$site['path']) ? bytes(dir_size((string)$site['path'])) : '目录缺失' ?></dd>
-      <dt>访问端口</dt><dd class="mono"><?= (int)$effective_port ?></dd>
-      <dt>Nginx 配置</dt><dd class="mono small"><?= e($conf_path) ?></dd>
-      <dt>访问日志</dt><dd class="mono small"><?= e($log_path ?: '未启用') ?></dd>
-      <dt>创建时间</dt><dd><?= e(date('Y-m-d H:i', strtotime($site['created_at']))) ?></dd>
-      <dt>HTTPS</dt><dd><?= $site['ssl_enabled'] ? '已启用' : '未启用' ?></dd>
-    </dl>
-  </div>
-</section>
 
 <?php if ($databases): ?>
 <section class="card mt-18">

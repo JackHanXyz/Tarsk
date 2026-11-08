@@ -30,6 +30,7 @@ function settings_page(): void
             'db_name' => config('database.name'),
         ],
         'settings' => settings_all(true),
+        'locked' => login_locked_list(),
     ], 'app');
 }
 
@@ -112,17 +113,126 @@ function settings_security_save(): void
     require_login();
     $entrance = trim((string)($_POST['security_entrance'] ?? ''));
     $recycle = (string)($_POST['recycle_enabled'] ?? '0') === '1' ? '1' : '0';
+    $allowlist = trim((string)($_POST['panel_ip_allowlist'] ?? ''));
+    $maxFail = max(3, min(20, (int)($_POST['login_max_fail'] ?? 5)));
+    $lockMinutes = max(1, min(1440, (int)($_POST['login_lock_minutes'] ?? 15)));
 
     if ($entrance !== '' && !preg_match('/^[A-Za-z0-9_-]{4,32}$/', $entrance)) {
         flash('error', '安全入口须为 4-32 位字母、数字、短横线或下划线');
         redirect('/settings');
     }
+    $rules = [];
+    foreach (preg_split('/[\s,;]+/', $allowlist) as $rule) {
+        $rule = trim($rule);
+        if ($rule === '') {
+            continue;
+        }
+        if (!preg_match('#^(?:\d{1,3}\.){1,3}(?:\d{1,3}|\*)|\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}|[A-Fa-f0-9:]+#', $rule)) {
+            flash('error', 'IP 白名单格式不正确：' . $rule . '（支持 1.2.3.4、1.2.3.*、1.2.3.0/24）');
+            redirect('/settings');
+        }
+        $rules[] = $rule;
+    }
+    // 保存前确认当前 IP 仍在白名单内，避免把自己锁在门外
+    $newList = implode(',', $rules);
+    if ($newList !== '' && !security_ip_allowed_current($newList)) {
+        flash('error', '当前访问 IP（' . client_ip() . '）不在新白名单内，已拒绝保存以免失联');
+        redirect('/settings');
+    }
+
     setting_set('security_entrance', $entrance);
     setting_set('recycle_enabled', $recycle);
-    log_action('安全设置', '安全入口：' . ($entrance !== '' ? '/' . $entrance : '关闭') . '；回收站：' . ($recycle === '1' ? '开' : '关'), 'warning');
+    setting_set('panel_ip_allowlist', $newList);
+    setting_set('login_max_fail', (string)$maxFail);
+    setting_set('login_lock_minutes', (string)$lockMinutes);
+    log_action(
+        '安全设置',
+        '安全入口：' . ($entrance !== '' ? '/' . $entrance : '关闭')
+        . '；回收站：' . ($recycle === '1' ? '开' : '关')
+        . '；IP 白名单：' . ($newList !== '' ? $newList : '不限')
+        . '；登录失败锁定：' . $maxFail . ' 次 / ' . $lockMinutes . ' 分钟',
+        'warning'
+    );
     flash('success', $entrance !== ''
         ? '安全设置已保存，入口地址：' . url('/' . $entrance) . '（请牢记）'
         : '安全设置已保存');
+    redirect('/settings');
+}
+
+/**
+ * 用候选白名单判断当前 IP 是否可通过（保存前自检）
+ */
+function security_ip_allowed_current(string $candidateList): bool
+{
+    $ip = client_ip();
+    foreach (preg_split('/[\s,;]+/', $candidateList) as $rule) {
+        if ($rule !== '' && security_ip_match($ip, $rule)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function settings_notify_save(): void
+{
+    require_login();
+    $channels = array_values(array_intersect(
+        array_map('strval', (array)($_POST['channels'] ?? [])),
+        ['mail', 'webhook']
+    ));
+
+    $smtpPort = max(1, min(65535, (int)($_POST['smtp_port'] ?? 465)));
+    $secure = (string)($_POST['smtp_secure'] ?? 'ssl');
+    if (!in_array($secure, ['ssl', 'tls', 'none'], true)) {
+        $secure = 'ssl';
+    }
+    $webhook = trim((string)($_POST['notify_webhook'] ?? ''));
+    if ($webhook !== '' && !preg_match('#^https?://#', $webhook)) {
+        flash('error', 'Webhook 地址必须以 http:// 或 https:// 开头');
+        redirect('/settings');
+    }
+
+    $fields = [
+        'smtp_host' => trim((string)($_POST['smtp_host'] ?? '')),
+        'smtp_port' => (string)$smtpPort,
+        'smtp_user' => trim((string)($_POST['smtp_user'] ?? '')),
+        'smtp_pass' => trim((string)($_POST['smtp_pass'] ?? '')),
+        'smtp_secure' => $secure,
+        'smtp_from' => trim((string)($_POST['smtp_from'] ?? '')),
+        'smtp_to' => trim((string)($_POST['smtp_to'] ?? '')),
+        'notify_webhook' => $webhook,
+        'alert_cpu' => (string)max(1, min(100, (int)($_POST['alert_cpu'] ?? 90))),
+        'alert_mem' => (string)max(1, min(100, (int)($_POST['alert_mem'] ?? 90))),
+        'alert_disk' => (string)max(1, min(100, (int)($_POST['alert_disk'] ?? 90))),
+        'alert_cooldown' => (string)max(5, min(1440, (int)($_POST['alert_cooldown'] ?? 30))),
+    ];
+    foreach ($fields as $key => $value) {
+        setting_set($key, $value);
+    }
+    setting_set('notify_channels', implode(',', $channels));
+
+    log_action('更新通知设置', '渠道：' . ($channels ? implode('/', $channels) : '未启用'), 'info');
+    flash('success', '通知设置已保存');
+    redirect('/settings');
+}
+
+function settings_notify_test(): void
+{
+    require_login();
+    $channels = notify_channels();
+    if (!$channels) {
+        flash('warning', '未启用任何通知渠道，请先勾选并保存');
+        redirect('/settings');
+    }
+    $results = notify('测试通知', '这是一条来自 Tarsk 面板的测试消息，收到即表示通知渠道配置正确。', 'info');
+    $parts = [];
+    $ok = false;
+    foreach ($results as $channel => $result) {
+        $parts[] = ($channel === 'mail' ? '邮件' : 'Webhook') . '：' . $result['message'];
+        $ok = $ok || $result['ok'];
+    }
+    log_action('测试通知', implode('；', $parts), $ok ? 'info' : 'warning');
+    flash($ok ? 'success' : 'error', implode('；', $parts));
     redirect('/settings');
 }
 

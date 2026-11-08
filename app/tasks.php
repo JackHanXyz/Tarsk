@@ -13,6 +13,7 @@ function task_types(): array
         'db_backup' => '数据库备份',
         'log_cut' => '站点日志切割',
         'cert_renew' => "Let's Encrypt 证书续期",
+        'site_check' => '站点存活巡检',
     ];
 }
 
@@ -80,6 +81,10 @@ function task_execute(array $task): array
 
         case 'cert_renew':
             $result = task_cert_renew();
+            break;
+
+        case 'site_check':
+            $result = task_site_check((int)($payload['site_id'] ?? 0));
             break;
 
         case 'command':
@@ -201,6 +206,57 @@ function task_cert_renew(): array
         ];
     }
     return ['ok' => true, 'message' => $renewed > 0 ? '已续期 ' . $renewed . ' 张证书' : '所有证书都未进入续期窗口（剩余 > ' . $days . ' 天）'];
+}
+
+/**
+ * 站点存活巡检：通过 Host 头访问站点首页，失败时发送通知
+ */
+function task_site_check(int $siteId = 0): array
+{
+    $sites = $siteId > 0
+        ? fetch_all('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId])
+        : fetch_all('SELECT * FROM ' . t('sites') . " WHERE status = 'running'");
+    if (!$sites) {
+        return ['ok' => false, 'message' => '没有需要巡检的站点'];
+    }
+
+    $port = active_web_port();
+    $okCount = 0;
+    $failures = [];
+    foreach ($sites as $site) {
+        $host = trim((string)$site['domain']) !== '' ? (string)$site['domain'] : (string)$site['name'] . '.local';
+        $url = 'http://127.0.0.1:' . $port . '/';
+        $ctx = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => "Host: " . $host . "\r\nUser-Agent: Tarsk-Uptime/1.0\r\n",
+                'timeout' => 8,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $body = @file_get_contents($url, false, $ctx);
+        $status = 0;
+        foreach ($http_response_header ?? [] as $line) {
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $line, $m)) {
+                $status = (int)$m[1];
+            }
+        }
+        if ($status >= 200 && $status < 400) {
+            $okCount++;
+        } else {
+            $failures[] = $site['name'] . '（HTTP ' . ($status > 0 ? $status : '超时') . '）';
+        }
+    }
+
+    if ($failures) {
+        $message = '以下站点巡检失败：' . implode('；', $failures);
+        $notify = notify('站点巡检失败', $message, 'danger');
+        return [
+            'ok' => false,
+            'message' => $message . ($notify ? '（已发送通知）' : ''),
+        ];
+    }
+    return ['ok' => true, 'message' => '全部 ' . $okCount . ' 个站点访问正常'];
 }
 
 /**

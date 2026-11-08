@@ -93,10 +93,15 @@ function schema_statements(): array
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(120) NOT NULL UNIQUE,
             domain VARCHAR(190) NOT NULL DEFAULT '',
+            domains VARCHAR(500) NOT NULL DEFAULT '',
             path VARCHAR(255) NOT NULL,
             php_version VARCHAR(20) NOT NULL DEFAULT '',
             port INT UNSIGNED NOT NULL DEFAULT 80,
             rewrite VARCHAR(40) NOT NULL DEFAULT '',
+            index_files VARCHAR(255) NOT NULL DEFAULT 'index.html index.htm index.php',
+            force_https TINYINT(1) NOT NULL DEFAULT 0,
+            anti_leech TINYINT(1) NOT NULL DEFAULT 0,
+            open_basedir TINYINT(1) NOT NULL DEFAULT 0,
             proxy_enabled TINYINT(1) NOT NULL DEFAULT 0,
             proxy_pass VARCHAR(255) NOT NULL DEFAULT '',
             ssl_enabled TINYINT(1) NOT NULL DEFAULT 0,
@@ -215,6 +220,16 @@ function schema_statements(): array
             created_at DATETIME NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
+        "CREATE TABLE IF NOT EXISTS {$p}login_attempts (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            ip VARCHAR(64) NOT NULL,
+            username VARCHAR(120) NOT NULL DEFAULT '',
+            attempts INT UNSIGNED NOT NULL DEFAULT 0,
+            locked_until DATETIME NULL,
+            updated_at DATETIME NOT NULL,
+            UNIQUE KEY uk_ip_user (ip, username)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
         "CREATE TABLE IF NOT EXISTS {$p}plugins (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             app_key VARCHAR(60) NOT NULL UNIQUE,
@@ -266,6 +281,11 @@ function migrate_schema(): void
     ensure_column('sites', 'php_port', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensure_column('sites', 'proxy_enabled', 'TINYINT(1) NOT NULL DEFAULT 0');
     ensure_column('sites', 'proxy_pass', "VARCHAR(255) NOT NULL DEFAULT ''");
+    ensure_column('sites', 'domains', "VARCHAR(500) NOT NULL DEFAULT ''");
+    ensure_column('sites', 'index_files', "VARCHAR(255) NOT NULL DEFAULT 'index.html index.htm index.php'");
+    ensure_column('sites', 'force_https', 'TINYINT(1) NOT NULL DEFAULT 0');
+    ensure_column('sites', 'anti_leech', 'TINYINT(1) NOT NULL DEFAULT 0');
+    ensure_column('sites', 'open_basedir', 'TINYINT(1) NOT NULL DEFAULT 0');
     ensure_column('cron', 'type', "VARCHAR(32) NOT NULL DEFAULT 'command'");
     ensure_column('cron', 'payload', 'TEXT NULL');
     ensure_column('users', 'totp_secret', "VARCHAR(64) NOT NULL DEFAULT ''");
@@ -328,6 +348,23 @@ function seed_data(array $admin = []): void
         'panel_ssl_port' => '8443',
         'backup_retention' => '7',
         'cert_renew_days' => '30',
+        'panel_ip_allowlist' => '',
+        'login_max_fail' => '5',
+        'login_lock_minutes' => '15',
+        'notify_channels' => '',
+        'notify_webhook' => '',
+        'smtp_host' => '',
+        'smtp_port' => '465',
+        'smtp_user' => '',
+        'smtp_pass' => '',
+        'smtp_secure' => 'ssl',
+        'smtp_from' => '',
+        'smtp_to' => '',
+        'alert_cpu' => '90',
+        'alert_mem' => '90',
+        'alert_disk' => '90',
+        'alert_cooldown' => '30',
+        'alert_last_at' => '',
         'installed_at' => now(),
     ];
     foreach ($defaults as $key => $value) {

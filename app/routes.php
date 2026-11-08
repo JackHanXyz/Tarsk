@@ -28,6 +28,11 @@ return [
     ['POST', '/files/rename', 'files.php', 'files_rename'],
     ['POST', '/files/delete', 'files.php', 'files_delete'],
     ['POST', '/files/upload', 'files.php', 'files_upload'],
+    ['POST', '/files/compress', 'files.php', 'files_compress'],
+    ['POST', '/files/extract', 'files.php', 'files_extract'],
+    ['POST', '/files/chmod', 'files.php', 'files_chmod'],
+    ['POST', '/files/fetch', 'files.php', 'files_fetch'],
+    ['POST', '/files/batchDelete', 'files.php', 'files_batchDelete'],
     ['GET', '/files/download', 'files.php', 'files_download'],
 
     ['GET', '/recycle', 'recycle.php', 'recycle_page'],
@@ -99,6 +104,7 @@ return [
     ['POST', '/plugins/uninstall', 'plugins_market.php', 'plugins_uninstall'],
 
     ['GET', '/logs', 'logs.php', 'logs_page'],
+    ['GET', '/logs/export', 'logs.php', 'logs_export'],
 
     ['GET', '/settings', 'settings.php', 'settings_page'],
     ['POST', '/settings/save', 'settings.php', 'settings_save'],
@@ -108,4 +114,6 @@ return [
     ['POST', '/settings/2fa/enable', 'settings.php', 'settings_2fa_enable'],
     ['POST', '/settings/2fa/disable', 'settings.php', 'settings_2fa_disable'],
     ['POST', '/settings/panel-ssl', 'settings.php', 'settings_panel_ssl'],
+    ['POST', '/settings/notify/save', 'settings.php', 'settings_notify_save'],
+    ['POST', '/settings/notify/test', 'settings.php', 'settings_notify_test'],
 ];

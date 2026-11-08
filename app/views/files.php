@@ -13,6 +13,10 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
     <button class="btn btn--ghost btn--sm" data-open="mkdirDialog"><?= icon('folder', 14) ?>新建目录</button>
     <button class="btn btn--ghost btn--sm" data-open="fileCreateDialog"><?= icon('plus', 14) ?>新建文件</button>
     <button class="btn btn--ghost btn--sm" data-trigger="fileUploadInput"><?= icon('upload', 14) ?>上传文件</button>
+    <button class="btn btn--ghost btn--sm" type="button" data-batch-action="<?= url('/files/compress') ?>"><?= icon('box', 14) ?>压缩</button>
+    <button class="btn btn--ghost btn--sm" type="button" data-open="extractDialog"><?= icon('download', 14) ?>解压</button>
+    <button class="btn btn--ghost btn--sm" type="button" data-open="fetchDialog"><?= icon('external', 14) ?>远程下载</button>
+    <button class="btn btn--danger-ghost btn--sm" type="button" data-batch-action="<?= url('/files/batchDelete') ?>"><?= icon('trash', 14) ?>批量删除</button>
     <a class="btn btn--ghost btn--sm" href="<?= url('/files?path=' . urlencode($rel)) ?>"><?= icon('refresh', 14) ?>刷新</a>
   </div>
 </div>
@@ -38,10 +42,13 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
         <small>上传文件或新建目录开始建站</small>
       </div>
     <?php else: ?>
+      <form id="fileBatchForm" method="post" action="<?= url('/files/batchDelete') ?>">
+        <?= csrf_field() ?>
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
+              <th style="width:34px"><input type="checkbox" id="fileSelectAll" title="全选"></th>
               <th>名称</th>
               <th style="width:120px">大小</th>
               <th style="width:150px">修改时间</th>
@@ -55,6 +62,7 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
             $childRel = $rel === '' ? $entry['name'] : $rel . '/' . $entry['name'];
             ?>
             <tr class="file-row" data-search="<?= e(strtolower($entry['name'])) ?>">
+              <td><input type="checkbox" name="paths[]" value="<?= e($childRel) ?>" title="<?= e($entry['name']) ?>"></td>
               <td>
                 <div class="file-name">
                   <span class="file-ico <?= $entry['is_dir'] ? 'file-ico--dir' : (isset($extColors[$entry['ext']]) ? 'file-ico--code' : '') ?>">
@@ -80,6 +88,8 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
                     <button class="icon-btn" type="button" title="重命名"
                       data-rename-path="<?= e($childRel) ?>" data-rename-name="<?= e($entry['name']) ?>"><?= icon('edit', 14) ?></button>
                   <?php endif; ?>
+                  <button class="icon-btn" type="button" title="权限" data-open="chmodDialog"
+                    data-chmod-path="<?= e($childRel) ?>" data-chmod-mode="<?= e($entry['perm']) ?>"><?= icon('lock', 14) ?></button>
                   <button class="icon-btn icon-btn--danger" type="button" title="删除"
                     data-delete-path="<?= e($childRel) ?>" data-delete-name="<?= e($entry['name']) ?>"><?= icon('trash', 14) ?></button>
                 </div>
@@ -89,6 +99,7 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
           </tbody>
         </table>
       </div>
+      </form>
     <?php endif; ?>
   </div>
   <div class="card__foot">
@@ -208,3 +219,123 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
     </div>
   </form>
 </dialog>
+
+<dialog class="modal" id="fetchDialog">
+  <form method="post" action="<?= url('/files/fetch') ?>">
+    <?= csrf_field() ?>
+    <input type="hidden" name="dir" value="<?= e($rel) ?>">
+    <div class="modal__head">
+      <h3>远程下载</h3>
+      <button class="icon-btn" type="button" data-close="fetchDialog"><?= icon('x', 14) ?></button>
+    </div>
+    <div class="modal__body">
+      <div class="field">
+        <label>下载链接</label>
+        <input class="input" type="url" name="url" placeholder="https://example.com/file.zip" required autofocus>
+        <span class="hint">仅支持 http / https，最大 500 MB，保存到当前目录（<?= e($rel === '' ? '站点根目录' : $rel) ?>）。</span>
+      </div>
+      <div class="field">
+        <label>保存名称（可选）</label>
+        <input class="input" type="text" name="filename" placeholder="默认取链接中的文件名">
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close="fetchDialog">取消</button>
+      <button class="btn btn--primary" type="submit"><?= icon('download', 14) ?>开始下载</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="extractDialog">
+  <form method="post" action="<?= url('/files/extract') ?>">
+    <?= csrf_field() ?>
+    <div class="modal__head">
+      <h3>解压归档</h3>
+      <button class="icon-btn" type="button" data-close="extractDialog"><?= icon('x', 14) ?></button>
+    </div>
+    <div class="modal__body">
+      <div class="field">
+        <label>归档文件路径</label>
+        <input class="input" type="text" name="path" placeholder="backup/20260101.zip" required autofocus>
+        <span class="hint">相对站点目录，支持 .zip / .tar / .tar.gz / .tgz / .gz，解压到归档文件所在目录。</span>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close="extractDialog">取消</button>
+      <button class="btn btn--primary" type="submit">开始解压</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="chmodDialog">
+  <form method="post" action="<?= url('/files/chmod') ?>">
+    <?= csrf_field() ?>
+    <input type="hidden" name="path" id="chmodPath">
+    <div class="modal__head">
+      <h3>修改权限</h3>
+      <button class="icon-btn" type="button" data-close="chmodDialog"><?= icon('x', 14) ?></button>
+    </div>
+    <div class="modal__body">
+      <div class="field">
+        <label>目标</label>
+        <span class="small mono muted" id="chmodTarget">—</span>
+      </div>
+      <div class="field">
+        <label>权限值</label>
+        <input class="input" type="text" name="mode" id="chmodMode" placeholder="755" required autofocus>
+        <span class="hint">3-4 位八进制，如 644 / 755 / 0755。Windows 下权限位可能不生效，仅 POSIX 有效。</span>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close="chmodDialog">取消</button>
+      <button class="btn btn--primary" type="submit">保存权限</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  var form = document.getElementById('fileBatchForm');
+  if (!form) { return; }
+
+  var boxes = function () {
+    return Array.prototype.slice.call(form.querySelectorAll('input[name="paths[]"]'));
+  };
+  var checked = function () {
+    return boxes().filter(function (box) { return box.checked; });
+  };
+
+  var selectAll = document.getElementById('fileSelectAll');
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      boxes().forEach(function (box) { box.checked = selectAll.checked; });
+    });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-batch-action]'), function (button) {
+    button.addEventListener('click', function () {
+      var items = checked();
+      if (items.length === 0) {
+        window.alert('请先勾选文件或目录');
+        return;
+      }
+      var action = button.getAttribute('data-batch-action') || '';
+      if (action.indexOf('batchDelete') !== -1) {
+        if (!window.confirm('确定删除选中的 ' + items.length + ' 项吗？可通过回收站还原。')) { return; }
+      }
+      form.action = action;
+      form.submit();
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-chmod-path]'), function (button) {
+    button.addEventListener('click', function () {
+      var path = button.getAttribute('data-chmod-path') || '';
+      var mode = button.getAttribute('data-chmod-mode') || '';
+      document.getElementById('chmodPath').value = path;
+      document.getElementById('chmodMode').value = mode === '—' ? '' : mode;
+      document.getElementById('chmodTarget').textContent = path;
+    });
+  });
+})();
+</script>

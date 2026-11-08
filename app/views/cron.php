@@ -174,6 +174,17 @@ declare(strict_types=1);
           <span class="hint" style="line-height:2">检查所有 Let's Encrypt 证书，剩余有效期低于设置阈值（默认 30 天）时自动重新签发并回写站点配置。建议每天执行一次。</span>
         </div>
 
+        <div class="field span-2 cron-field" data-for="site_check">
+          <label>巡检范围</label>
+          <select class="input" name="site_id">
+            <option value="0">全部运行中站点</option>
+            <?php foreach ($sites as $site): ?>
+              <option value="<?= (int)$site['id'] ?>"><?= e($site['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="hint">按 Host 头请求站点首页，返回 2xx/3xx 视为正常；失败时通过已启用的通知渠道告警。</span>
+        </div>
+
         <div class="field span-2">
           <label>提示</label>
           <span class="hint" style="line-height:2">每分钟/每小时/开机时任务会忽略执行时间字段。</span>

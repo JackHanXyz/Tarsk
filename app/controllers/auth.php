@@ -23,13 +23,28 @@ function login_submit(): void
         redirect('/login');
     }
 
+    $ip = client_ip();
+    $remaining = login_guard_remaining($ip, $username);
+    if ($remaining > 0) {
+        $minutes = (int)ceil($remaining / 60);
+        flash('error', '尝试次数过多，请在 ' . $minutes . ' 分钟后再试');
+        redirect('/login');
+    }
+
     $row = fetch_one('SELECT * FROM ' . t('users') . ' WHERE username = ?', [$username]);
     if (!$row || !password_verify($password, $row['password_hash'])) {
         usleep(400000);
-        log_action('登录失败', '账号 ' . $username, 'warning', null, $username);
-        flash('error', '账号或密码错误');
+        $guard = login_guard_fail($ip, $username);
+        log_action('登录失败', '账号 ' . $username . ' · 第 ' . $guard['attempts'] . ' 次', 'warning', null, $username);
+        if ($guard['locked']) {
+            flash('error', '密码错误次数过多，账号已锁定 ' . (int)setting('login_lock_minutes', '15') . ' 分钟');
+            redirect('/login');
+        }
+        flash('error', '账号或密码错误，还可尝试 ' . $guard['remaining'] . ' 次');
         redirect('/login');
     }
+
+    login_guard_reset($ip, $username);
 
     // 已启用两步验证：先验证动态码再完成登录
     if ((int)($row['totp_enabled'] ?? 0) === 1 && (string)($row['totp_secret'] ?? '') !== '') {

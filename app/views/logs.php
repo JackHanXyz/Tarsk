@@ -8,7 +8,10 @@ $levelText = ['info' => '信息', 'warning' => '警告', 'danger' => '危险'];
     <h2>操作日志</h2>
     <p>面板内的关键操作都会记录，默认保留 90 天。</p>
   </div>
-  <span class="badge badge--muted">共 <?= number_format($total) ?> 条</span>
+  <div class="toolbar">
+    <span class="badge badge--muted">共 <?= number_format($total) ?> 条</span>
+    <a class="btn btn--ghost btn--sm" href="<?= url('/logs/export?' . http_build_query(array_filter(['q' => $keyword, 'level' => $level, 'username' => $username, 'from' => $from, 'to' => $to]))) ?>"><?= icon('download', 14) ?>导出 CSV</a>
+  </div>
 </div>
 
 <div class="card">
@@ -17,7 +20,7 @@ $levelText = ['info' => '信息', 'warning' => '警告', 'danger' => '危险'];
     <form class="toolbar" method="get" action="<?= url('/logs') ?>">
       <div class="search-box">
         <?= icon('search', 14) ?>
-        <input type="search" name="q" value="<?= e($keyword) ?>" placeholder="搜索操作、详情或账号">
+        <input type="search" name="q" value="<?= e($keyword) ?>" placeholder="搜索操作、详情、账号或 IP">
       </div>
       <select class="input" name="level" style="height:32px;width:auto">
         <option value="">全部级别</option>
@@ -25,7 +28,11 @@ $levelText = ['info' => '信息', 'warning' => '警告', 'danger' => '危险'];
         <option value="warning" <?= $level === 'warning' ? 'selected' : '' ?>>警告</option>
         <option value="danger" <?= $level === 'danger' ? 'selected' : '' ?>>危险</option>
       </select>
+      <input class="input" type="text" name="username" value="<?= e($username) ?>" placeholder="账号" style="height:32px;width:110px">
+      <input class="input" type="date" name="from" value="<?= e($from) ?>" style="height:32px;width:auto" title="起始日期">
+      <input class="input" type="date" name="to" value="<?= e($to) ?>" style="height:32px;width:auto" title="结束日期">
       <button class="btn btn--ghost btn--sm" type="submit">筛选</button>
+      <a class="btn btn--ghost btn--sm" href="<?= url('/logs') ?>">重置</a>
     </form>
   </div>
   <div class="card__body card__body--flush">
@@ -65,8 +72,10 @@ $levelText = ['info' => '信息', 'warning' => '警告', 'danger' => '危险'];
         <span class="small muted">第 <?= $page ?> / <?= $pages ?> 页</span>
         <div class="toolbar">
           <?php
-          $query = function (int $p) use ($keyword, $level) {
-              return url('/logs?' . http_build_query(array_filter(['q' => $keyword, 'level' => $level, 'page' => $p])));
+          $query = function (int $p) use ($keyword, $level, $username, $from, $to) {
+              $params = array_filter(['q' => $keyword, 'level' => $level, 'username' => $username, 'from' => $from, 'to' => $to]);
+              $params['page'] = $p;
+              return url('/logs?' . http_build_query($params));
           };
           ?>
           <a class="btn btn--ghost btn--sm <?= $page <= 1 ? 'is-disabled' : '' ?>" href="<?= $page <= 1 ? '#' : $query($page - 1) ?>" <?= $page <= 1 ? 'aria-disabled="true"' : '' ?>>上一页</a>

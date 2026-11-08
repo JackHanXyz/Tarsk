@@ -15,6 +15,8 @@ require_once __DIR__ . '/panel_ssl.php';
 require_once __DIR__ . '/acme.php';
 require_once __DIR__ . '/backup.php';
 require_once __DIR__ . '/tasks.php';
+require_once __DIR__ . '/security.php';
+require_once __DIR__ . '/notify.php';
 
 date_default_timezone_set((string)(config('app.timezone') ?: 'Asia/Shanghai'));
 
@@ -343,6 +345,13 @@ function record_metrics_sample(array $metrics): void
             now(),
         ]
     );
+
+    // 采样后检查资源阈值（带冷却时间，未启用通知渠道时直接跳过）
+    try {
+        alert_check_resources($metrics);
+    } catch (Throwable $e) {
+        // 告警失败不影响监控写入
+    }
 }
 
 /* --------------------------------- 路径 --------------------------------- */
@@ -502,10 +511,10 @@ ensure_storage();
 /* --------------------------- 自动增量迁移 --------------------------- */
 
 try {
-    if ((int)setting('schema_version', '1') < 3) {
+    if ((int)setting('schema_version', '1') < 4) {
         install_schema();
         seed_data();
-        setting_set('schema_version', '3');
+        setting_set('schema_version', '4');
     }
 } catch (Throwable $e) {
     // 数据库未就绪时跳过，安装向导会再次执行

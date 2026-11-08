@@ -36,6 +36,7 @@ function cron_target_text(array $task): string
     switch ((string)($task['type'] ?? 'command')) {
         case 'site_backup':
         case 'log_cut':
+        case 'site_check':
             $siteId = (int)($payload['site_id'] ?? 0);
             if ($siteId <= 0) {
                 return $siteId === 0 ? '全部站点' : '';
@@ -95,6 +96,8 @@ function cron_create(): void
         }
         $payload['db_name'] = $dbName;
     } elseif ($type === 'log_cut') {
+        $payload['site_id'] = $siteId;
+    } elseif ($type === 'site_check') {
         $payload['site_id'] = $siteId;
     }
 

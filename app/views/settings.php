@@ -176,7 +176,28 @@ declare(strict_types=1);
               <span>删除文件时先移入回收站（可还原）</span>
             </label>
           </div>
+          <div class="field span-2">
+            <label>面板 IP 白名单</label>
+            <textarea class="input mono" name="panel_ip_allowlist" rows="2" placeholder="留空不限制，例如：127.0.0.1, 192.168.1.*, 10.0.0.0/8"><?= e($settings['panel_ip_allowlist'] ?? '') ?></textarea>
+            <span class="hint">支持精确 IP、通配 <code>1.2.3.*</code> 与 CIDR <code>1.2.3.0/24</code>。保存时会校验当前 IP 是否仍可访问。</span>
+          </div>
+          <div class="field">
+            <label>登录失败上限（次）</label>
+            <input class="input" type="number" name="login_max_fail" min="3" max="20" value="<?= e($settings['login_max_fail'] ?? '5') ?>">
+            <span class="hint">同一 IP + 账号连续失败达到该次数即锁定</span>
+          </div>
+          <div class="field">
+            <label>锁定时长（分钟）</label>
+            <input class="input" type="number" name="login_lock_minutes" min="1" max="1440" value="<?= e($settings['login_lock_minutes'] ?? '15') ?>">
+            <span class="hint">锁定期间即使密码正确也会被拒绝</span>
+          </div>
         </div>
+        <?php if (!empty($locked)): ?>
+          <div class="alert alert--warning mt-12">
+            <?= icon('alert', 16) ?>
+            <span>当前有 <?= count($locked) ?> 条锁定记录：<?= e(implode('、', array_map(fn($r) => $r['ip'] . ' / ' . $r['username'] . '（剩余 ' . $r['remaining'] . ' 分钟）', array_slice($locked, 0, 5)))) ?></span>
+          </div>
+        <?php endif; ?>
       </div>
       <div class="card__foot" style="display:flex;justify-content:flex-end">
         <button class="btn btn--primary" type="submit"><?= icon('save', 14) ?>保存安全设置</button>
@@ -258,6 +279,94 @@ declare(strict_types=1);
       </div>
     </form>
   </article>
+</section>
+
+<?php $channels = array_filter(explode(',', (string)($settings['notify_channels'] ?? ''))); ?>
+<section class="card mt-18">
+  <div class="card__head">
+    <span class="card__title"><?= icon('alert', 17) ?>通知与告警</span>
+    <span class="badge <?= $channels ? 'badge--ok' : 'badge--muted' ?>"><i></i><?= $channels ? '已启用 ' . count($channels) . ' 个渠道' : '未启用' ?></span>
+  </div>
+  <form method="post" action="<?= url('/settings/notify/save') ?>">
+    <?= csrf_field() ?>
+    <div class="card__body">
+      <div class="form-grid">
+        <div class="field span-2">
+          <label>启用渠道</label>
+          <label class="checkbox">
+            <input type="checkbox" name="channels[]" value="mail" <?= in_array('mail', $channels, true) ? 'checked' : '' ?>>
+            邮件（SMTP）
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" name="channels[]" value="webhook" <?= in_array('webhook', $channels, true) ? 'checked' : '' ?>>
+            Webhook（飞书 / 钉钉 / 自定义）
+          </label>
+        </div>
+        <div class="field">
+          <label>SMTP 服务器</label>
+          <input class="input mono" type="text" name="smtp_host" value="<?= e($settings['smtp_host'] ?? '') ?>" placeholder="smtp.qq.com">
+        </div>
+        <div class="field">
+          <label>端口</label>
+          <input class="input" type="number" name="smtp_port" min="1" max="65535" value="<?= e($settings['smtp_port'] ?? '465') ?>">
+        </div>
+        <div class="field">
+          <label>加密方式</label>
+          <select class="input" name="smtp_secure">
+            <option value="ssl" <?= ($settings['smtp_secure'] ?? 'ssl') === 'ssl' ? 'selected' : '' ?>>SSL（通常 465）</option>
+            <option value="tls" <?= ($settings['smtp_secure'] ?? '') === 'tls' ? 'selected' : '' ?>>STARTTLS（通常 587）</option>
+            <option value="none" <?= ($settings['smtp_secure'] ?? '') === 'none' ? 'selected' : '' ?>>不加密</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>发件人</label>
+          <input class="input mono" type="text" name="smtp_from" value="<?= e($settings['smtp_from'] ?? '') ?>" placeholder="留空使用账号">
+        </div>
+        <div class="field">
+          <label>SMTP 账号</label>
+          <input class="input mono" type="text" name="smtp_user" value="<?= e($settings['smtp_user'] ?? '') ?>">
+        </div>
+        <div class="field">
+          <label>SMTP 密码</label>
+          <input class="input mono" type="password" name="smtp_pass" value="<?= e($settings['smtp_pass'] ?? '') ?>">
+        </div>
+        <div class="field span-2">
+          <label>收件人</label>
+          <input class="input mono" type="text" name="smtp_to" value="<?= e($settings['smtp_to'] ?? '') ?>" placeholder="admin@example.com, ops@example.com">
+        </div>
+        <div class="field span-2">
+          <label>Webhook 地址</label>
+          <input class="input mono" type="text" name="notify_webhook" value="<?= e($settings['notify_webhook'] ?? '') ?>" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx">
+          <span class="hint">同时兼容飞书与钉钉的 text 消息体格式。</span>
+        </div>
+        <div class="field">
+          <label>CPU 告警阈值（%）</label>
+          <input class="input" type="number" name="alert_cpu" min="1" max="100" value="<?= e($settings['alert_cpu'] ?? '90') ?>">
+        </div>
+        <div class="field">
+          <label>内存告警阈值（%）</label>
+          <input class="input" type="number" name="alert_mem" min="1" max="100" value="<?= e($settings['alert_mem'] ?? '90') ?>">
+        </div>
+        <div class="field">
+          <label>磁盘告警阈值（%）</label>
+          <input class="input" type="number" name="alert_disk" min="1" max="100" value="<?= e($settings['alert_disk'] ?? '90') ?>">
+        </div>
+        <div class="field">
+          <label>告警冷却（分钟）</label>
+          <input class="input" type="number" name="alert_cooldown" min="5" max="1440" value="<?= e($settings['alert_cooldown'] ?? '30') ?>">
+          <span class="hint">同一时段内最多发送一次告警</span>
+        </div>
+      </div>
+      <div class="alert alert--info" style="margin:14px 0 0">
+        <?= icon('alert', 16) ?>
+        <span>资源阈值在监控采样时检查；站点存活巡检需在「计划任务」中配置「站点存活巡检」任务。通知依赖 PHP 的 openssl 扩展。</span>
+      </div>
+    </div>
+    <div class="card__foot" style="display:flex;justify-content:space-between;align-items:center">
+      <button class="btn btn--ghost" type="submit" formaction="<?= url('/settings/notify/test') ?>"><?= icon('zap', 14) ?>发送测试通知</button>
+      <button class="btn btn--primary" type="submit"><?= icon('save', 14) ?>保存通知设置</button>
+    </div>
+  </form>
 </section>
 
 <script>

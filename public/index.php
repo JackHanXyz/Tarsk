@@ -16,6 +16,12 @@ $routes = array_merge(require $root . '/app/routes.php', plugin_routes());
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $path = current_path();
 
+// 面板 IP 白名单：不在名单内的来源直接拒绝
+if (!security_ip_allowed(client_ip())) {
+    http_response_code(403);
+    exit('403 Forbidden：当前 IP 不在面板访问白名单内');
+}
+
 // 安全入口：启用后，未登录访问任何路径都需先经过入口路径
 $entrance = trim((string)setting('security_entrance', ''));
 if ($entrance !== '' && !current_user()) {

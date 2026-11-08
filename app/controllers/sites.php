@@ -195,6 +195,11 @@ function sites_update(int $id): void
     $status = (string)($_POST['status'] ?? $site['status']);
     $proxyEnabled = !empty($_POST['proxy_enabled']) ? 1 : 0;
     $proxyPass = trim((string)($_POST['proxy_pass'] ?? ''));
+    $domains = trim((string)($_POST['domains'] ?? ''));
+    $indexFiles = trim((string)($_POST['index_files'] ?? ''));
+    $forceHttps = !empty($_POST['force_https']) ? 1 : 0;
+    $antiLeech = !empty($_POST['anti_leech']) ? 1 : 0;
+    $openBasedir = !empty($_POST['open_basedir']) ? 1 : 0;
     if (!array_key_exists($rewrite, site_rewrite_presets())) {
         $rewrite = '';
     }
@@ -209,8 +214,8 @@ function sites_update(int $id): void
     $php = sites_resolve_php($php, $notes);
 
     execute(
-        'UPDATE ' . t('sites') . ' SET domain = ?, php_version = ?, rewrite = ?, remark = ?, status = ?, proxy_enabled = ?, proxy_pass = ? WHERE id = ?',
-        [$domain, $php, $rewrite, $remark, $status, $proxyEnabled, $proxyPass, $id]
+        'UPDATE ' . t('sites') . ' SET domain = ?, domains = ?, php_version = ?, rewrite = ?, remark = ?, status = ?, proxy_enabled = ?, proxy_pass = ?, index_files = ?, force_https = ?, anti_leech = ?, open_basedir = ? WHERE id = ?',
+        [$domain, $domains, $php, $rewrite, $remark, $status, $proxyEnabled, $proxyPass, $indexFiles, $forceHttps, $antiLeech, $openBasedir, $id]
     );
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
 
