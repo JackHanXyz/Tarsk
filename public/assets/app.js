@@ -680,3 +680,18 @@
     setTimeout(monitorPoll, 700);
   }
 })();
+
+/* -------------------------- 明暗主题切换 -------------------------- */
+(function () {
+  var root = document.documentElement;
+  function apply(theme) {
+    root.setAttribute('data-theme', theme);
+    try { localStorage.setItem('tarsk-theme', theme); } catch (e) {}
+    document.dispatchEvent(new CustomEvent('tarsk:theme', { detail: { theme: theme } }));
+  }
+  document.addEventListener('click', function (event) {
+    var btn = event.target.closest && event.target.closest('[data-theme-toggle]');
+    if (!btn) { return; }
+    apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+})();

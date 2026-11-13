@@ -247,6 +247,16 @@ function schema_statements(): array
               PRIMARY KEY (`site_id`, `day`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
+        "CREATE TABLE IF NOT EXISTS {$p}user_sites (
+              `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+              `user_id` int(10) unsigned NOT NULL,
+              `site_id` int(10) unsigned NOT NULL,
+              `created_at` datetime NOT NULL,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `user_site` (`user_id`, `site_id`),
+              KEY `site_id` (`site_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
         "CREATE TABLE IF NOT EXISTS {$p}plugins (
               `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
               `app_key` varchar(60) NOT NULL,

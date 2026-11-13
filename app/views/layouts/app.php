@@ -5,6 +5,10 @@ $panelName = setting('panel_name', config('app.name', 'Tarsk'));
 $currentUser = current_user();
 $active = $active ?? '';
 $title = $title ?? '面板';
+$themePref = (string)setting('theme', 'light');
+if (!in_array($themePref, ['light', 'dark', 'auto'], true)) {
+    $themePref = 'light';
+}
 $navGroups = [
     '总览' => [
         ['key' => 'dashboard', 'label' => '概览', 'url' => '/', 'icon' => 'grid'],
@@ -68,13 +72,28 @@ if ($pluginNav) {
 }
 ?>
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme-pref="<?= e($themePref) ?>" data-theme="<?= $themePref === 'dark' ? 'dark' : 'light' ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($title) ?> · <?= e($panelName) ?></title>
+<script>
+/* 首屏前定主题，避免闪白 */
+(function () {
+  try {
+    var pref = document.documentElement.getAttribute('data-theme-pref') || 'light';
+    var saved = localStorage.getItem('tarsk-theme');
+    var theme = saved === 'light' || saved === 'dark' ? saved : pref;
+    if (theme === 'auto') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {}
+})();
+</script>
 <link rel="stylesheet" href="<?= url('/assets/app.css') ?>?v=<?= e(config('app.version', '1.0.0')) ?>">
 <link rel="stylesheet" href="<?= url('/assets/ui-kit.css') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/ui-kit.css') ?>">
+<link rel="stylesheet" href="<?= url('/assets/theme-dark.css') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/theme-dark.css') ?>">
 <link rel="icon" type="image/svg+xml" href="<?= url('/assets/tarsk-avatar.svg') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/tarsk-avatar.svg') ?>">
 </head>
 <body>
@@ -138,6 +157,10 @@ if ($pluginNav) {
       </div>
       <div class="topbar__right">
         <a class="btn btn--ghost btn--sm" href="<?= url('/') ?>"><?= icon('refresh', 14) ?><span>刷新</span></a>
+        <button class="icon-btn theme-toggle" type="button" data-theme-toggle title="切换明暗主题" aria-label="切换明暗主题">
+          <span class="theme-toggle__icon--sun"><?= icon('sun', 15) ?></span>
+          <span class="theme-toggle__icon--moon"><?= icon('moon', 15) ?></span>
+        </button>
         <a class="btn btn--ghost btn--sm" href="<?= url('/settings') ?>"><?= icon('settings', 14) ?><span>设置</span></a>
         <span class="chip chip--ok"><i></i>面板运行中</span>
       </div>

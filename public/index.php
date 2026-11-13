@@ -72,6 +72,16 @@ foreach ($routes as [$routeMethod, $pattern, $file, $function]) {
         // 角色权限：按「方法 + 路径」判定，不通过直接 403
         if (current_user() && !in_array($path, $guestPaths, true)) {
             authz_enforce($method, $path);
+            // 站点级权限：路径里的站点 ID 必须先落在当前账号的授权范围内
+            if (preg_match('#^/sites/(?:api/)?(\d+)(?:/|$)#', $path, $siteMatch)) {
+                $siteId = (int)$siteMatch[1];
+                if (!site_allowed($siteId)) {
+                    if (str_starts_with($path, '/sites/api')) {
+                        json_response(['ok' => false, 'message' => '当前账号未被授权访问该站点'], 403);
+                    }
+                    site_deny();
+                }
+            }
         }
         $controller = str_starts_with($file, 'plugin:')
             ? substr($file, 7)

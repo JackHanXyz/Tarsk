@@ -23,6 +23,15 @@ declare(strict_types=1);
             <input class="input" type="text" name="panel_name" value="<?= e($settings['panel_name'] ?? 'Tarsk') ?>">
           </div>
           <div class="field">
+            <label>默认外观</label>
+            <select class="input" name="theme">
+              <?php foreach (['light' => '浅色', 'dark' => '深色', 'auto' => '跟随系统'] as $tval => $tlabel): ?>
+                <option value="<?= e($tval) ?>" <?= ($settings['theme'] ?? 'light') === $tval ? 'selected' : '' ?>><?= e($tlabel) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <span class="hint">右上角的太阳/月亮按钮可临时切换，仅作用于当前浏览器</span>
+          </div>
+          <div class="field">
             <label>监控刷新间隔（秒）</label>
             <input class="input" type="number" name="refresh_interval" min="1" max="30" value="<?= e($settings['refresh_interval'] ?? '3') ?>">
           </div>

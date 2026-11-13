@@ -15,6 +15,12 @@ function users_page(): void
         }
     }
 
+    $allSites = fetch_all('SELECT id, name, domain FROM ' . t('sites') . ' ORDER BY name');
+    $scopeMap = [];
+    foreach (site_scope_map() as $uid => $ids) {
+        $scopeMap[(int)$uid] = $ids;
+    }
+
     render('users', [
         'title' => '用户管理',
         'active' => 'users',
@@ -24,6 +30,8 @@ function users_page(): void
         'permission_labels' => authz_permission_labels(),
         'admin_count' => $adminCount,
         'me' => (int)(current_user()['id'] ?? 0),
+        'all_sites' => $allSites,
+        'scope_map' => $scopeMap,
     ], 'app');
 }
 
@@ -137,8 +145,40 @@ function users_delete(): void
             redirect('/users');
         }
     }
+    execute('DELETE FROM ' . t('user_sites') . ' WHERE user_id = ?', [$id]);
     execute('DELETE FROM ' . t('users') . ' WHERE id = ?', [$id]);
     log_action('删除用户', (string)$user['username'], 'danger');
     flash('success', '用户 ' . $user['username'] . ' 已删除');
+    redirect('/users');
+}
+
+/**
+ * 保存用户的站点授权范围
+ * 不勾选任何站点 = 取消限制，恢复为「可见全部站点」（与升级前行为一致）
+ */
+function users_sites_save(): void
+{
+    $id = (int)($_POST['id'] ?? 0);
+    $user = fetch_one('SELECT * FROM ' . t('users') . ' WHERE id = ?', [$id]);
+    if (!$user) {
+        flash('error', '用户不存在');
+        redirect('/users');
+    }
+    $sites = $_POST['sites'] ?? [];
+    if (!is_array($sites)) {
+        $sites = [];
+    }
+    user_sites_set($id, $sites);
+    $count = count(user_site_ids($id));
+
+    if (authz_role_of($user) === 'admin') {
+        log_action('设置站点权限', $user['username'] . ' · 管理员默认全站可见', 'warning');
+        flash('warning', '管理员始终可访问全部站点，授权记录已保存但不生效');
+    } else {
+        log_action('设置站点权限', $user['username'] . ($count > 0 ? ' · ' . $count . ' 个站点' : ' · 不限（全部站点）'), 'warning');
+        flash('success', $count > 0
+            ? '已限制 ' . $user['username'] . ' 只能访问 ' . $count . ' 个站点'
+            : $user['username'] . ' 已恢复为可访问全部站点');
+    }
     redirect('/users');
 }

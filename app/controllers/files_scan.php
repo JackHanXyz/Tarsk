@@ -18,7 +18,7 @@ function files_scan_site(): ?array
 function files_scan_page(): void
 {
     $site = files_scan_site();
-    $sites = fetch_all('SELECT id, name, domain, path FROM ' . t('sites') . ' ORDER BY name');
+    $sites = fetch_all('SELECT id, name, domain, path FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql() . ' ORDER BY name');
 
     render('files_scan', [
         'title' => '文件安全',

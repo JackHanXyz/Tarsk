@@ -2,15 +2,33 @@
 declare(strict_types=1);
 
 $panelName = $panel_name ?? setting('panel_name', config('app.name', 'Tarsk'));
+$themePref = (string)setting('theme', 'light');
+if (!in_array($themePref, ['light', 'dark', 'auto'], true)) {
+    $themePref = 'light';
+}
 ?>
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme-pref="<?= e($themePref) ?>" data-theme="<?= $themePref === 'dark' ? 'dark' : 'light' ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($title ?? '登录') ?> · <?= e($panelName) ?></title>
+<script>
+(function () {
+  try {
+    var pref = document.documentElement.getAttribute('data-theme-pref') || 'light';
+    var saved = localStorage.getItem('tarsk-theme');
+    var theme = saved === 'light' || saved === 'dark' ? saved : pref;
+    if (theme === 'auto') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {}
+})();
+</script>
 <link rel="stylesheet" href="<?= url('/assets/app.css') ?>?v=<?= e(config('app.version', '1.0.0')) ?>">
 <link rel="stylesheet" href="<?= url('/assets/ui-kit.css') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/ui-kit.css') ?>">
+<link rel="stylesheet" href="<?= url('/assets/theme-dark.css') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/theme-dark.css') ?>">
 <link rel="icon" type="image/svg+xml" href="<?= url('/assets/tarsk-avatar.svg') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/tarsk-avatar.svg') ?>">
 </head>
 <body class="auth-body">

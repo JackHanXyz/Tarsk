@@ -199,6 +199,7 @@ return [
     ['POST', '/users/update', 'users.php', 'users_update'],
     ['POST', '/users/password', 'users.php', 'users_password'],
     ['POST', '/users/delete', 'users.php', 'users_delete'],
+    ['POST', '/users/sites', 'users.php', 'users_sites_save'],
 
     ['GET', '/settings', 'settings.php', 'settings_page'],    ['POST', '/settings/save', 'settings.php', 'settings_save'],
     ['POST', '/settings/password', 'settings.php', 'settings_password'],

@@ -78,7 +78,9 @@ Tarsk 是一个用原生 PHP 8 和 MySQL 写成的一体化服务器管理面板
 - 安全入口路径、TOTP 两步验证（含 10 个一次性恢复码）、面板 IP 白名单（精确 / 通配 / CIDR）、登录失败自动封禁
 - CSRF 防护、会话固定防护、操作日志审计与 CSV 导出
 - 三级角色（`admin` / `operator` / `viewer`），按「方法 + 路径」在路由层统一鉴权
-- REST API `/api/v1` + Bearer Token（`read` / `write` scope，只存 SHA-256 摘要）
+- 站点级权限：可把 `operator` / `viewer` 限定到指定站点，列表、详情、写操作、站点 API 与备份下载全部按授权范围收窄
+- REST API `/api/v1` + Bearer Token（`read` / `write` scope，只存 SHA-256 摘要），Token 继承签发账号的站点范围
+- 明暗主题：浅色 / 深色 / 跟随系统三种默认外观，顶栏太阳按钮即时切换（仅作用于当前浏览器，首屏前生效不闪白）
 
 ## 环境要求
 
@@ -194,6 +196,7 @@ Tarsk/
 │   ├── notify.php        SMTP / Webhook 通知与告警
 │   ├── security.php      登录封禁、IP 白名单
 │   ├── authz.php         角色与权限矩阵
+│   ├── siteaccess.php    站点级授权范围（user_sites）
 │   ├── api.php           REST API 分发
 │   ├── updater.php       在线升级
 │   ├── ftpd.php          纯 PHP FTP 服务器

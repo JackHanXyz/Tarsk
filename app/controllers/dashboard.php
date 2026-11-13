@@ -10,11 +10,11 @@ function dashboard_page(): void
     $services = services_status();
     $mysql = mysql_server_info();
     $docker = docker_info();
-    $siteCount = (int)(fetch_one('SELECT COUNT(*) AS n FROM ' . t('sites'))['n'] ?? 0);
+    $siteCount = (int)(fetch_one('SELECT COUNT(*) AS n FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql())['n'] ?? 0);
     $cronCount = (int)(fetch_one('SELECT COUNT(*) AS n FROM ' . t('cron') . ' WHERE status = ?', ['enabled'])['n'] ?? 0);
     $dbCount = count(mysql_databases());
     $logs = fetch_all('SELECT * FROM ' . t('logs') . ' ORDER BY id DESC LIMIT 8');
-    $sites = fetch_all('SELECT * FROM ' . t('sites') . ' ORDER BY id DESC LIMIT 5');
+    $sites = fetch_all('SELECT * FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql() . ' ORDER BY id DESC LIMIT 5');
 
     $diskTotal = (int)($metrics['disk_total'] ?? 0);
     $diskUsed = (int)($metrics['disk_used'] ?? 0);

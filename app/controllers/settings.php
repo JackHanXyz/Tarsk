@@ -56,6 +56,7 @@ function settings_save(): void
 
     $fields = [
         'panel_name' => fn($v) => trim($v) !== '' ? trim($v) : 'Tarsk',
+        'theme' => fn($v) => in_array($v, ['light', 'dark', 'auto'], true) ? $v : 'light',
         'sites_root' => fn($v) => trim($v),
         'backup_path' => fn($v) => trim($v),
         'refresh_interval' => fn($v) => max(1, min(30, (int)$v)),

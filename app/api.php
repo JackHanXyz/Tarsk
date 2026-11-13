@@ -147,6 +147,9 @@ function api_site_proxy_apply(int $id, array $token): void
     if (!$site) {
         api_respond(['ok' => false, 'error' => 'not_found', 'message' => '站点不存在'], 404);
     }
+    if (!site_allowed($id)) {
+        api_respond(['ok' => false, 'error' => 'forbidden', 'message' => '该 Token 所属账号未被授权访问此站点'], 403);
+    }
     if (($site['status'] ?? '') !== 'running') {
         api_respond(['ok' => false, 'error' => 'conflict', 'message' => '请先启动站点，再应用反向代理'], 409);
     }
@@ -209,6 +212,14 @@ function api_dispatch(string $method, string $path): void
         api_respond(['ok' => false, 'error' => 'unauthorized', 'message' => '缺少或无效的 Bearer Token'], 401);
     }
     $method = strtoupper($method);
+    // 以 token 所属账号作为本次请求的身份，使站点级权限同样生效；
+    // 早期没有 user_id 的 token 视为管理员（未做限制）。
+    $owner = null;
+    $ownerId = (int)($token['user_id'] ?? 0);
+    if ($ownerId > 0) {
+        $owner = fetch_one('SELECT * FROM ' . t('users') . ' WHERE id = ?', [$ownerId]);
+    }
+    $GLOBALS['__tarsk_user'] = $owner ?: ['id' => 0, 'username' => 'api-token', 'role' => 'admin', 'status' => 'enabled'];
     $segments = array_values(array_filter(explode('/', $path)));
     // ['api','v1', ...]
     $rest = array_slice($segments, 2);
@@ -239,6 +250,9 @@ function api_dispatch(string $method, string $path): void
                     if (!$site) {
                         api_respond(['ok' => false, 'error' => 'not_found', 'message' => '站点不存在'], 404);
                     }
+                    if (!site_allowed((int)$site['id'])) {
+                        api_respond(['ok' => false, 'error' => 'forbidden', 'message' => '该 Token 所属账号未被授权访问此站点'], 403);
+                    }
                     api_respond(['ok' => true, 'data' => [
                         'id' => (int)$site['id'], 'name' => (string)$site['name'], 'domain' => (string)$site['domain'],
                         'domains' => (string)($site['domains'] ?? ''), 'path' => (string)$site['path'],
@@ -249,7 +263,7 @@ function api_dispatch(string $method, string $path): void
                     ]]);
                 }
                 if ($method === 'GET' && count($rest) === 1) {
-                    $rows = fetch_all('SELECT id, name, domain, status, php_version, port, ssl_enabled, proxy_enabled FROM ' . t('sites') . ' ORDER BY id');
+                    $rows = fetch_all('SELECT id, name, domain, status, php_version, port, ssl_enabled, proxy_enabled FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql() . ' ORDER BY id');
                     api_respond(['ok' => true, 'data' => $rows]);
                 }
                 if ($method === 'POST' && count($rest) === 3 && ctype_digit((string)$rest[1]) && $rest[2] === 'proxy') {
@@ -261,6 +275,9 @@ function api_dispatch(string $method, string $path): void
                     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
                     if (!$site) {
                         api_respond(['ok' => false, 'error' => 'not_found', 'message' => '站点不存在'], 404);
+                    }
+                    if (!site_allowed($id)) {
+                        api_respond(['ok' => false, 'error' => 'forbidden', 'message' => '该 Token 所属账号未被授权访问此站点'], 403);
                     }
                     $next = $site['status'] === 'running' ? 'stopped' : 'running';
                     $candidate = $site;

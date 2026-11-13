@@ -7,7 +7,7 @@ declare(strict_types=1);
 
 function sites_page(): void
 {
-    $sites = fetch_all('SELECT * FROM ' . t('sites') . ' ORDER BY id DESC');
+    $sites = fetch_all('SELECT * FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql() . ' ORDER BY id DESC');
     foreach ($sites as &$site) {
         $site['exists'] = is_dir((string)$site['path']);
         $site['size'] = $site['exists'] ? dir_size((string)$site['path']) : 0;
@@ -156,6 +156,16 @@ function sites_create(): void
         [$name, $domain, $path, $php, $port, $rewrite, 0, 'running', $remark, now()]
     );
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE name = ?', [$name]);
+
+    // 受限于站点范围的账号：新建的站点自动纳入其授权范围，否则建完就看不见
+    if ($site && site_scope_limited()) {
+        $uid = (int)(current_user()['id'] ?? 0);
+        if ($uid > 0) {
+            $ids = user_site_ids($uid);
+            $ids[] = (int)$site['id'];
+            user_sites_set($uid, $ids);
+        }
+    }
 
     $confResult = write_site_vhost($site);
     $notes[] = $confResult['message'];
@@ -367,7 +377,7 @@ function sites_delete(int $id): void
 
 function sites_api_index(): void
 {
-    $rows = fetch_all('SELECT * FROM ' . t('sites') . ' ORDER BY id DESC');
+    $rows = fetch_all('SELECT * FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql() . ' ORDER BY id DESC');
     $items = [];
     foreach ($rows as $site) {
         $exists = is_dir((string)$site['path']);

@@ -46,7 +46,7 @@ $operatorCount = count(array_filter($users, fn($u) => $u['role'] === 'operator')
     <div class="table-wrap">
       <table class="table">
         <thead>
-          <tr><th>账号</th><th style="width:120px">角色</th><th style="width:110px">状态</th><th>最近登录</th><th style="width:90px">两步验证</th><th style="text-align:right;width:150px">操作</th></tr>
+          <tr><th>账号</th><th style="width:120px">角色</th><th style="width:150px">站点权限</th><th style="width:110px">状态</th><th>最近登录</th><th style="width:90px">两步验证</th><th style="text-align:right;width:150px">操作</th></tr>
         </thead>
         <tbody>
         <?php foreach ($users as $user): ?>
@@ -67,6 +67,31 @@ $operatorCount = count(array_filter($users, fn($u) => $u['role'] === 'operator')
                   <?php endforeach; ?>
                 </select>
               </form>
+            </td>
+            <?php
+              $myScope = $scope_map[(int)$user['id']] ?? [];
+              $isAdmin = $user['role'] === 'admin';
+              $scopeNames = [];
+              foreach ($all_sites as $srow) {
+                  if (in_array((int)$srow['id'], $myScope, true)) {
+                      $scopeNames[] = (string)$srow['name'];
+                  }
+              }
+            ?>
+            <td>
+              <?php if ($isAdmin): ?>
+                <span class="badge badge--muted" title="管理员固定可见全部站点">全部（管理员）</span>
+              <?php elseif ($myScope): ?>
+                <button class="badge badge--info" type="button" title="<?= e(implode('、', $scopeNames)) ?>" data-open="userSites"
+                  data-id="<?= (int)$user['id'] ?>" data-name="<?= e($user['username']) ?>" data-sites="<?= e(implode(',', $myScope)) ?>">
+                  限 <?= count($myScope) ?> 个站点
+                </button>
+              <?php else: ?>
+                <button class="badge badge--muted" type="button" title="未做限制，可见全部站点" data-open="userSites"
+                  data-id="<?= (int)$user['id'] ?>" data-name="<?= e($user['username']) ?>" data-sites="">
+                  全部站点
+                </button>
+              <?php endif; ?>
             </td>
             <td>
               <form method="post" action="<?= url('/users/update') ?>">
@@ -207,8 +232,50 @@ $operatorCount = count(array_filter($users, fn($u) => $u['role'] === 'operator')
   </form>
 </dialog>
 
+<dialog class="modal" id="userSites">
+  <form method="post" action="<?= url('/users/sites') ?>">
+    <?= csrf_field() ?>
+    <div class="modal__head">
+      <h3>站点权限</h3>
+      <button class="icon-btn" type="button" data-close="userSites"><?= icon('x', 14) ?></button>
+    </div>
+    <div class="modal__body">
+      <input type="hidden" name="id" id="userSitesId">
+      <p class="small muted" style="margin-top:0">账号 <b class="mono" id="userSitesName"></b> 只能看到被勾选的站点；不勾选任何站点表示<b>不限制</b>（可见全部）。</p>
+      <?php if (!$all_sites): ?>
+        <p class="small muted">当前还没有站点可分配。</p>
+      <?php else: ?>
+        <div class="form-grid">
+          <?php foreach ($all_sites as $srow): ?>
+            <label class="checkbox span-2" style="padding:4px 0">
+              <input type="checkbox" name="sites[]" value="<?= (int)$srow['id'] ?>">
+              <span class="mono"><?= e($srow['name']) ?></span>
+              <span class="cell-sub" style="margin-left:6px"><?= e($srow['domain'] ?: '未绑定域名') ?></span>
+            </label>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close="userSites">取消</button>
+      <button class="btn btn--primary" type="submit">保存授权</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 (function () {
+  document.querySelectorAll('[data-open="userSites"][data-id]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var form = document.querySelector('#userSites form');
+      document.getElementById('userSitesId').value = btn.getAttribute('data-id') || '';
+      document.getElementById('userSitesName').textContent = btn.getAttribute('data-name') || '';
+      var ids = (btn.getAttribute('data-sites') || '').split(',').filter(function (v) { return v !== ''; });
+      form.querySelectorAll('input[name="sites[]"]').forEach(function (box) {
+        box.checked = ids.indexOf(box.value) !== -1;
+      });
+    });
+  });
   document.querySelectorAll('[data-open="userPwd"][data-id]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       document.getElementById('userPwdId').value = btn.getAttribute('data-id') || '';

@@ -51,7 +51,7 @@ function deploy_catalog(): array
 function deploy_page(): void
 {
     require_login();
-    $sites = fetch_all('SELECT * FROM ' . t('sites') . ' ORDER BY id DESC');
+    $sites = fetch_all('SELECT * FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql() . ' ORDER BY id DESC');
     render('deploy', [
         'title' => '一键部署',
         'active' => 'deploy',

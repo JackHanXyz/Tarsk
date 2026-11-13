@@ -16,6 +16,7 @@ require_once __DIR__ . '/selfheal.php';
 require_once __DIR__ . '/dbadmin.php';
 require_once __DIR__ . '/filesecurity.php';
 require_once __DIR__ . '/authz.php';
+require_once __DIR__ . '/siteaccess.php';
 require_once __DIR__ . '/api.php';
 require_once __DIR__ . '/remote.php';
 require_once __DIR__ . '/projects.php';
@@ -235,6 +236,10 @@ function current_user(bool $fresh = false): ?array
     if ($fresh) {
         $loaded = false;
         $user = null;
+    }
+    // REST API 场景：由 token 所属账号覆盖，供权限与站点范围判定复用
+    if (array_key_exists('__tarsk_user', $GLOBALS)) {
+        return $GLOBALS['__tarsk_user'];
     }
     if ($loaded) {
         return $user;
@@ -538,10 +543,10 @@ ensure_storage();
 /* --------------------------- 自动增量迁移 --------------------------- */
 
 try {
-    if ((int)setting('schema_version', '1') < 12) {
+    if ((int)setting('schema_version', '1') < 13) {
         install_schema();
         seed_data();
-        setting_set('schema_version', '12');
+        setting_set('schema_version', '13');
     }
 } catch (Throwable $e) {
     // 数据库未就绪时跳过，安装向导会再次执行

@@ -20,7 +20,7 @@ function cron_page(): void
         'title' => '计划任务',
         'active' => 'cron',
         'tasks' => $tasks,
-        'sites' => fetch_all('SELECT id, name, domain FROM ' . t('sites') . ' ORDER BY id DESC'),
+        'sites' => fetch_all('SELECT id, name, domain FROM ' . t('sites') . ' WHERE 1=1' . site_scope_sql() . ' ORDER BY id DESC'),
         'databases' => mysql_databases(),
         'types' => task_types(),
         'scheduler' => PHP_OS_FAMILY === 'Windows' ? 'Windows 任务计划程序' : 'crontab',
