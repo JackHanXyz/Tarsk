@@ -4,12 +4,24 @@
 
 Tarsk 是一个用原生 PHP 8 和 MySQL 写成的一体化服务器管理面板：站点、运行环境、文件、数据库、备份、SSL、计划任务、监控告警、安全防护全部在一个界面里完成。后端不依赖 Composer 与任何框架，Windows / Linux 双平台可直接跑，另附原生桌面客户端。
 
+![Tarsk 总览](docs/screenshots/dashboard.png)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
 [![PHP](https://img.shields.io/badge/PHP-8.1%2B-777bb4.svg)](https://www.php.net/)
 [![MySQL](https://img.shields.io/badge/MySQL-5.6%2B-4479a1.svg)](https://www.mysql.com/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-0078d4.svg)](#环境要求)
 
 ---
+
+## 界面预览
+
+| 网站管理 | 文件管理 |
+| --- | --- |
+| ![网站管理](docs/screenshots/sites.png) | ![文件管理](docs/screenshots/files.png) |
+| **数据库** | **监控** |
+| ![数据库](docs/screenshots/databases.png) | ![监控](docs/screenshots/monitor.png) |
+| **PHP 环境配置** | **SSL 证书** |
+| ![PHP 配置](docs/screenshots/env-php.png) | ![SSL 证书](docs/screenshots/ssl.png) |
 
 ## 为什么是 Tarsk
 
