@@ -150,14 +150,18 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Forc
 if ($reusePanel) {
     Write-Host "      Tarsk 已在端口 $PanelPort 运行，跳过启动。"
 } else {
-    # 不用 Start-Process 的输出重定向：目标日志被占用时会永久阻塞，改用 cmd 追加写入
+    # 用带时间戳的日志文件，避免上次进程占用同一日志导致 Start-Process 阻塞
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $panelLog = Join-Path $logDir "panel-$stamp.log"
-    $cmdLine = '"' + $php + '" -S 127.0.0.1:' + $PanelPort + ' -t public public/router.php >> "' + $panelLog + '" 2>&1'
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -WorkingDirectory $Root -WindowStyle Hidden
+    $outLog = Join-Path $logDir "panel-$stamp.out.log"
+    $errLog = Join-Path $logDir "panel-$stamp.err.log"
+    Start-Process -FilePath $php `
+        -ArgumentList @('-S', "127.0.0.1:$PanelPort", '-t', 'public', 'public/router.php') `
+        -WorkingDirectory $Root -WindowStyle Hidden `
+        -RedirectStandardOutput $outLog `
+        -RedirectStandardError $errLog
     Start-Sleep -Milliseconds 1500
     if (-not (Test-TarskOnPort $PanelPort)) {
-        Write-Host "      [警告] 面板未响应，请查看日志：$panelLog" -ForegroundColor Yellow
+        Write-Host "      [警告] 面板未响应，请查看日志：$errLog" -ForegroundColor Yellow
     }
 }
 
