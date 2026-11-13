@@ -11,6 +11,8 @@ require_once __DIR__ . '/runtime.php';
 require_once __DIR__ . '/site_vhost.php';
 require_once __DIR__ . '/envconfig.php';
 require_once __DIR__ . '/loganalytics.php';
+require_once __DIR__ . '/traffic.php';
+require_once __DIR__ . '/selfheal.php';
 require_once __DIR__ . '/dbadmin.php';
 require_once __DIR__ . '/filesecurity.php';
 require_once __DIR__ . '/authz.php';
@@ -370,6 +372,13 @@ function record_metrics_sample(array $metrics): void
     } catch (Throwable $e) {
         // 告警失败不影响监控写入
     }
+
+    // 顺带把原始采样汇总成小时均值（内部有 5 分钟节流），供 7/30 天趋势使用
+    try {
+        rollup_metrics();
+    } catch (Throwable $e) {
+        // 聚合失败不影响主流程
+    }
 }
 
 /* --------------------------------- 路径 --------------------------------- */
@@ -529,11 +538,21 @@ ensure_storage();
 /* --------------------------- 自动增量迁移 --------------------------- */
 
 try {
-    if ((int)setting('schema_version', '1') < 9) {
+    if ((int)setting('schema_version', '1') < 12) {
         install_schema();
         seed_data();
-        setting_set('schema_version', '9');
+        setting_set('schema_version', '12');
     }
 } catch (Throwable $e) {
     // 数据库未就绪时跳过，安装向导会再次执行
+}
+
+/* --------------------------- 流量采集（5 分钟节流） --------------------------- */
+
+try {
+    if (function_exists('traffic_collect') && config('database.name', '') !== '') {
+        traffic_collect();
+    }
+} catch (Throwable $e) {
+    // 采集失败不影响页面
 }

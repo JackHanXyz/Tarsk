@@ -169,6 +169,7 @@ return [
 
     ['GET', '/logs', 'logs.php', 'logs_page'],
     ['GET', '/logs/analyze', 'logs.php', 'logs_analyze_page'],
+    ['GET', '/logs/tail', 'logs.php', 'logs_tail'],
     ['GET', '/logs/export', 'logs.php', 'logs_export'],
 
     ['GET', '/update', 'update.php', 'update_page'],
@@ -205,6 +206,7 @@ return [
     ['POST', '/settings/2fa/prepare', 'settings.php', 'settings_2fa_prepare'],
     ['POST', '/settings/2fa/enable', 'settings.php', 'settings_2fa_enable'],
     ['POST', '/settings/2fa/disable', 'settings.php', 'settings_2fa_disable'],
+    ['POST', '/settings/2fa/recovery', 'settings.php', 'settings_2fa_recovery'],
     ['POST', '/settings/panel-ssl', 'settings.php', 'settings_panel_ssl'],
     ['POST', '/settings/notify/save', 'settings.php', 'settings_notify_save'],
     ['POST', '/settings/notify/test', 'settings.php', 'settings_notify_test'],

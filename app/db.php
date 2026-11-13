@@ -225,6 +225,28 @@ function schema_statements(): array
               KEY `idx_created` (`created_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
+        "CREATE TABLE IF NOT EXISTS {$p}monitor_hourly (
+              `bucket` datetime NOT NULL,
+              `cpu_avg` decimal(6,2) NOT NULL DEFAULT '0.00',
+              `cpu_max` decimal(6,2) NOT NULL DEFAULT '0.00',
+              `mem_avg` decimal(6,2) NOT NULL DEFAULT '0.00',
+              `mem_max` decimal(6,2) NOT NULL DEFAULT '0.00',
+              `disk_avg` decimal(6,2) NOT NULL DEFAULT '0.00',
+              `load_avg` decimal(6,2) NOT NULL DEFAULT '0.00',
+              `net_rx` bigint(20) unsigned NOT NULL DEFAULT '0',
+              `net_tx` bigint(20) unsigned NOT NULL DEFAULT '0',
+              `samples` int(10) unsigned NOT NULL DEFAULT '0',
+              PRIMARY KEY (`bucket`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS {$p}traffic (
+              `site_id` int(10) unsigned NOT NULL,
+              `day` date NOT NULL,
+              `bytes` bigint(20) unsigned NOT NULL DEFAULT '0',
+              `hits` int(10) unsigned NOT NULL DEFAULT '0',
+              PRIMARY KEY (`site_id`, `day`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
         "CREATE TABLE IF NOT EXISTS {$p}plugins (
               `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
               `app_key` varchar(60) NOT NULL,
@@ -429,6 +451,8 @@ function migrate_schema(): void
     ensure_column('sites', 'hsts_enabled', 'TINYINT(1) NOT NULL DEFAULT 0');
     ensure_column('cron', 'cron_expr', "VARCHAR(60) NOT NULL DEFAULT ''");
     ensure_column('users', 'status', "ENUM('enabled','disabled') NOT NULL DEFAULT 'enabled'");
+    ensure_column('users', 'recovery_codes', 'TEXT NULL');
+    ensure_column('sites', 'traffic_quota_mb', 'INT UNSIGNED NOT NULL DEFAULT 0');
 
 
     try {
@@ -535,4 +559,111 @@ function trim_logs(): void
     $p = db_prefix();
     execute("DELETE FROM {$p}logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 90 DAY)");
     execute("DELETE FROM {$p}monitor WHERE created_at < DATE_SUB(NOW(), INTERVAL 72 HOUR)");
+    execute("DELETE FROM {$p}monitor_hourly WHERE bucket < DATE_SUB(NOW(), INTERVAL 180 DAY)");
+}
+
+/**
+ * 把原始采样（30 秒一条、只保留 72 小时）汇总成小时均值，长期保留 180 天。
+ * 幂等：按小时窗口重算并覆盖，当前小时会在下一次调用时刷新。
+ */
+function rollup_metrics(bool $force = false): void
+{
+    $last = (int)setting('metrics_rollup_at', '0');
+    if (!$force && time() - $last < 300) {
+        return;
+    }
+    $p = db_prefix();
+    $memPct = 'AVG(mem_used / NULLIF(mem_total, 0) * 100)';
+    $memMax = 'MAX(mem_used / NULLIF(mem_total, 0) * 100)';
+    $diskPct = 'AVG(disk_used / NULLIF(disk_total, 0) * 100)';
+    execute(
+        "INSERT INTO {$p}monitor_hourly
+            (bucket, cpu_avg, cpu_max, mem_avg, mem_max, disk_avg, load_avg, net_rx, net_tx, samples)
+         SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00') AS b,
+                ROUND(AVG(cpu), 2), ROUND(MAX(cpu), 2),
+                ROUND({$memPct}, 2), ROUND($memMax, 2),
+                ROUND({$diskPct}, 2), ROUND(AVG(load1), 2),
+                MAX(net_rx), MAX(net_tx), COUNT(*)
+         FROM {$p}monitor
+         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 72 HOUR)
+         GROUP BY b
+         ON DUPLICATE KEY UPDATE
+            cpu_avg = VALUES(cpu_avg), cpu_max = VALUES(cpu_max),
+            mem_avg = VALUES(mem_avg), mem_max = VALUES(mem_max),
+            disk_avg = VALUES(disk_avg), load_avg = VALUES(load_avg),
+            net_rx = VALUES(net_rx), net_tx = VALUES(net_tx), samples = VALUES(samples)"
+    );
+    setting_set('metrics_rollup_at', (string)time());
+}
+
+/**
+ * 读监控趋势：24 小时内用原始采样（细），更长时间用小时聚合（粗）。
+ */
+function metrics_series(string $range = '24h'): array
+{
+    $range = in_array($range, ['1h', '24h', '7d', '30d'], true) ? $range : '24h';
+    $series = [];
+
+    if ($range === '1h' || $range === '24h') {
+        $interval = $range === '1h' ? '1 HOUR' : '24 HOUR';
+        $rows = fetch_all(
+            'SELECT * FROM ' . t('monitor') . '
+             WHERE created_at >= DATE_SUB(NOW(), INTERVAL ' . $interval . ') ORDER BY id ASC'
+        );
+        foreach ($rows as $row) {
+            $series[] = [
+                't' => date($range === '1h' ? 'H:i' : 'H:i', strtotime($row['created_at'])),
+                'cpu' => round((float)$row['cpu'], 1),
+                'mem' => round(percent((int)$row['mem_used'], (int)$row['mem_total']), 1),
+                'disk' => round(percent((int)$row['disk_used'], (int)$row['disk_total']), 1),
+                'rx' => (int)$row['net_rx'],
+                'tx' => (int)$row['net_tx'],
+            ];
+        }
+        return ['range' => $range, 'series' => $series, 'count' => count($series), 'unit' => '采样'];
+    }
+
+    $days = $range === '7d' ? 7 : 30;
+    $rows = fetch_all(
+        'SELECT * FROM ' . t('monitor_hourly') . '
+         WHERE bucket >= DATE_SUB(NOW(), INTERVAL ' . $days . ' DAY) ORDER BY bucket ASC'
+    );
+    foreach ($rows as $row) {
+        $series[] = [
+            't' => date($days <= 7 ? 'm-d H:00' : 'm-d', strtotime($row['bucket'])),
+            'cpu' => round((float)$row['cpu_avg'], 1),
+            'mem' => round((float)$row['mem_avg'], 1),
+            'disk' => round((float)$row['disk_avg'], 1),
+            'rx' => (int)$row['net_rx'],
+            'tx' => (int)$row['net_tx'],
+            'cpu_max' => round((float)$row['cpu_max'], 1),
+        ];
+    }
+    return ['range' => $range, 'series' => $series, 'count' => count($series), 'unit' => '小时均值'];
+}
+
+/**
+ * 今日 / 昨日资源摘要（用于监控页顶部对比）。
+ */
+function metrics_digest(): array
+{
+    $p = db_prefix();
+    $row = fetch_one(
+        "SELECT
+            AVG(CASE WHEN bucket >= CURDATE() THEN cpu_avg END) AS today_cpu,
+            MAX(CASE WHEN bucket >= CURDATE() THEN cpu_max END) AS today_cpu_max,
+            AVG(CASE WHEN bucket >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND bucket < CURDATE() THEN cpu_avg END) AS yday_cpu,
+            AVG(CASE WHEN bucket >= CURDATE() THEN mem_avg END) AS today_mem,
+            AVG(CASE WHEN bucket >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND bucket < CURDATE() THEN mem_avg END) AS yday_mem
+         FROM {$p}monitor_hourly
+         WHERE bucket >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)"
+    );
+    $num = static fn($v) => $v === null ? null : round((float)$v, 1);
+    return [
+        'today_cpu' => $num($row['today_cpu'] ?? null),
+        'today_cpu_max' => $num($row['today_cpu_max'] ?? null),
+        'yday_cpu' => $num($row['yday_cpu'] ?? null),
+        'today_mem' => $num($row['today_mem'] ?? null),
+        'yday_mem' => $num($row['yday_mem'] ?? null),
+    ];
 }

@@ -60,12 +60,27 @@ $sampleCount = count($series);
 
 <section class="card mt-18">
   <div class="card__head">
-    <span class="card__title"><?= icon('activity', 17) ?>24 小时资源曲线<span class="card__desc"><?= $sampleCount ?> 个采样点</span></span>
-    <div class="legend">
-      <span><i style="background:var(--chart-1)"></i>CPU</span>
-      <span><i style="background:var(--chart-2)"></i>内存</span>
-      <span><i style="background:var(--chart-3)"></i>磁盘</span>
+    <span class="card__title"><?= icon('activity', 17) ?><?= e($rangeLabel ?? '24 小时') ?>资源曲线<span class="card__desc"><?= $sampleCount ?> 个<?= e($seriesUnit ?? '采样') ?>点</span></span>
+    <div class="toolbar">
+      <?php foreach (($rangeLabels ?? []) as $key => $label): ?>
+        <a class="btn btn--sm <?= ($range ?? '24h') === $key ? '' : 'btn--ghost' ?>" href="<?= url('/monitor?range=' . $key) ?>"><?= e($label) ?></a>
+      <?php endforeach; ?>
     </div>
+  </div>
+  <?php if (!empty($digest) && ($digest['today_cpu'] !== null || $digest['yday_cpu'] !== null)): ?>
+  <div class="card__body" style="padding-bottom:0">
+    <div class="service-row" style="border:0;padding-bottom:0">
+      <span class="small muted">今日 CPU 均值 / 峰值</span>
+      <span class="small"><strong><?= $digest['today_cpu'] === null ? '—' : number_format($digest['today_cpu'], 1) . '%' ?></strong>
+        / <?= $digest['today_cpu_max'] === null ? '—' : number_format($digest['today_cpu_max'], 1) . '%' ?>
+        <span class="muted">（昨日均值 <?= $digest['yday_cpu'] === null ? '—' : number_format($digest['yday_cpu'], 1) . '%' ?>）</span></span>
+    </div>
+  </div>
+  <?php endif; ?>
+  <div class="legend" style="padding:0 18px 6px">
+    <span><i style="background:var(--chart-1)"></i>CPU</span>
+    <span><i style="background:var(--chart-2)"></i>内存</span>
+    <span><i style="background:var(--chart-3)"></i>磁盘</span>
   </div>
   <div class="card__body">
     <?php if ($sampleCount === 0): ?>

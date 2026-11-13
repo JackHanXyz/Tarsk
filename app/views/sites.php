@@ -73,6 +73,7 @@ declare(strict_types=1);
               <th>PHP</th>
               <th>SSL</th>
               <th>状态</th>
+              <th>流量（今日 / 本月）</th>
               <th style="text-align:right">操作</th>
             </tr>
           </thead>
@@ -104,6 +105,15 @@ declare(strict_types=1);
                 <?php if (!$site['exists']): ?>
                   <div class="cell-sub">目录缺失</div>
                 <?php endif; ?>
+              </td>
+              <td class="small">
+                <div><?= bytes($site['traffic_today'] ?? 0) ?></div>
+                <div class="cell-sub">
+                  <?= bytes($site['traffic_month'] ?? 0) ?>
+                  <?php if ((int)($site['traffic_quota_mb'] ?? 0) > 0): ?>
+                    / <?= bytes((int)$site['traffic_quota_mb'] * 1048576) ?>
+                  <?php endif; ?>
+                </div>
               </td>
               <td>
                 <div class="td-actions">

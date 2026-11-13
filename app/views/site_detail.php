@@ -112,6 +112,11 @@ declare(strict_types=1);
                 <input class="input mono" type="number" name="conn_limit" min="0" max="10000" value="<?= (int)($site['conn_limit'] ?? 0) ?>" placeholder="0">
                 <span class="hint">0 = 不限制，limit_conn 上限</span>
               </div>
+              <div class="field">
+                <label class="small">月流量配额（MB）</label>
+                <input class="input mono" type="number" name="traffic_quota_mb" min="0" max="1048576" value="<?= (int)($site['traffic_quota_mb'] ?? 0) ?>" placeholder="0">
+                <span class="hint">0 = 不限制；超出后写入本月一条告警（每月一次）</span>
+              </div>
             </div>
           </div>
           <div class="field span-2">

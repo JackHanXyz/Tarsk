@@ -98,3 +98,58 @@ function totp_otpauth_url(string $secret, string $account, string $issuer): stri
         . '&issuer=' . rawurlencode($issuer)
         . '&algorithm=SHA1&digits=6&period=30';
 }
+
+/* ----------------------------- 一次性恢复码 ----------------------------- */
+
+/**
+ * 恢复码：手机丢失时用来登录的一次性口令。
+ * 10 个码，每个 10 位十六进制（5-5 分组显示），库里只存 password_hash。
+ *
+ * @return array{plain: string[], masked: string[]}
+ */
+function totp_recovery_generate(int $userId, int $count = 10): array
+{
+    $plain = [];
+    $masked = [];
+    $hashes = [];
+    for ($i = 0; $i < $count; $i++) {
+        $raw = strtoupper(bin2hex(random_bytes(5)));   // 10 hex chars
+        $code = substr($raw, 0, 5) . '-' . substr($raw, 5, 5);
+        $plain[] = $code;
+        $masked[] = substr($code, 0, 5) . '-*****';
+        $hashes[] = password_hash(str_replace('-', '', $raw), PASSWORD_DEFAULT);
+    }
+    execute('UPDATE ' . t('users') . ' SET recovery_codes = ? WHERE id = ?', [json_encode($hashes), $userId]);
+    return ['plain' => $plain, 'masked' => $masked];
+}
+
+/**
+ * 校验并消耗一个恢复码（用过即失效）。
+ */
+function totp_recovery_consume(int $userId, string $code): bool
+{
+    $normalized = strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', $code));
+    if (strlen($normalized) !== 10) {
+        return false;
+    }
+    $row = fetch_one('SELECT recovery_codes FROM ' . t('users') . ' WHERE id = ?', [$userId]);
+    $hashes = json_decode((string)($row['recovery_codes'] ?? '[]'), true);
+    if (!is_array($hashes) || $hashes === []) {
+        return false;
+    }
+    foreach ($hashes as $index => $hash) {
+        if (password_verify($normalized, (string)$hash)) {
+            unset($hashes[$index]);
+            execute('UPDATE ' . t('users') . ' SET recovery_codes = ? WHERE id = ?', [json_encode(array_values($hashes)), $userId]);
+            return true;
+        }
+    }
+    return false;
+}
+
+function totp_recovery_remaining(int $userId): int
+{
+    $row = fetch_one('SELECT recovery_codes FROM ' . t('users') . ' WHERE id = ?', [$userId]);
+    $hashes = json_decode((string)($row['recovery_codes'] ?? '[]'), true);
+    return is_array($hashes) ? count($hashes) : 0;
+}

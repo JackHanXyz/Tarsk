@@ -44,7 +44,7 @@ foreach ($sites as $site) {
               <?php $targetId = $siteMatched[$item['target']] ?? 0; ?>
               <tr>
                 <td>
-                  <div class="cell-main"><?= e($item['target'] ?: $item['name']) ?></div>
+                  <div class="cell-main"><?= e($item['target'] ?: $item['name']) ?><?= !empty($item['encrypted']) ? ' <span class="badge badge--warn"><i></i>已加密</span>' : '' ?></div>
                   <div class="cell-sub mono"><?= e($item['name']) ?></div>
                 </td>
                 <td class="small"><?= bytes($item['size']) ?></td>
@@ -53,13 +53,10 @@ foreach ($sites as $site) {
                   <div class="td-actions">
                     <a class="icon-btn" href="<?= url('/backups/download?name=' . urlencode($item['name'])) ?>" title="下载"><?= icon('download', 13) ?></a>
                     <?php if ($targetId > 0): ?>
-                      <form method="post" action="<?= url('/backups/restore') ?>" data-confirm="将把备份文件覆盖到站点「<?= e($item['target']) ?>」目录，确定继续？">
-                        <?= csrf_field() ?>
-                        <input type="hidden" name="kind" value="site">
-                        <input type="hidden" name="name" value="<?= e($item['name']) ?>">
-                        <input type="hidden" name="site_id" value="<?= $targetId ?>">
-                        <button class="icon-btn" type="submit" title="恢复到该站点"><?= icon('refresh', 13) ?></button>
-                      </form>
+                      <button class="icon-btn" type="button" title="恢复到该站点"
+                              data-restore data-kind="site" data-name="<?= e($item['name']) ?>"
+                              data-site-id="<?= $targetId ?>" data-target="<?= e($item['target']) ?>"
+                              data-enc="<?= !empty($item['encrypted']) ? '1' : '0' ?>"><?= icon('refresh', 13) ?></button>
                     <?php endif; ?>
                     <form method="post" action="<?= url('/backups/delete') ?>" data-confirm="确定删除备份 <?= e($item['name']) ?>？">
                       <?= csrf_field() ?>
@@ -96,7 +93,7 @@ foreach ($sites as $site) {
             <?php foreach ($db_backups as $item): ?>
               <tr>
                 <td>
-                  <div class="cell-main mono"><?= e($item['target'] ?: $item['name']) ?></div>
+                  <div class="cell-main mono"><?= e($item['target'] ?: $item['name']) ?><?= !empty($item['encrypted']) ? ' <span class="badge badge--warn"><i></i>已加密</span>' : '' ?></div>
                   <div class="cell-sub mono"><?= e($item['name']) ?></div>
                 </td>
                 <td class="small"><?= bytes($item['size']) ?></td>
@@ -104,13 +101,10 @@ foreach ($sites as $site) {
                 <td>
                   <div class="td-actions">
                     <a class="icon-btn" href="<?= url('/backups/download?name=' . urlencode($item['name'])) ?>" title="下载"><?= icon('download', 13) ?></a>
-                    <form method="post" action="<?= url('/backups/restore') ?>" data-confirm="将把 SQL 导入数据库，同名表数据会被覆盖，确定继续？">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="kind" value="db">
-                      <input type="hidden" name="name" value="<?= e($item['name']) ?>">
-                      <input type="hidden" name="db_name" value="<?= e($item['target']) ?>">
-                      <button class="icon-btn" type="submit" title="恢复到该数据库"><?= icon('refresh', 13) ?></button>
-                    </form>
+                    <button class="icon-btn" type="button" title="恢复到该数据库"
+                            data-restore data-kind="db" data-name="<?= e($item['name']) ?>"
+                            data-db-name="<?= e($item['target']) ?>" data-target="<?= e($item['target']) ?>"
+                            data-enc="<?= !empty($item['encrypted']) ? '1' : '0' ?>"><?= icon('refresh', 13) ?></button>
                     <form method="post" action="<?= url('/backups/delete') ?>" data-confirm="确定删除备份 <?= e($item['name']) ?>？">
                       <?= csrf_field() ?>
                       <input type="hidden" name="name" value="<?= e($item['name']) ?>">
@@ -158,6 +152,11 @@ foreach ($sites as $site) {
           </select>
           <span class="hint">打包站点目录下全部文件，生成 zip 存入备份目录。</span>
         </div>
+        <div class="field span-2">
+          <label>加密口令（可选）</label>
+          <input class="input" type="password" name="password" minlength="8" autocomplete="new-password" placeholder="留空则不加密；填写则 AES-256-GCM 加密，恢复时需输入">
+          <span class="hint">口令不会入库，请自行记录；丢失后无法恢复备份。</span>
+        </div>
       </div>
     </div>
     <div class="modal__foot">
@@ -187,11 +186,42 @@ foreach ($sites as $site) {
           </select>
           <span class="hint">使用面板配置的 MySQL 账号导出，包含表结构与数据。</span>
         </div>
+        <div class="field span-2">
+          <label>加密口令（可选）</label>
+          <input class="input" type="password" name="password" minlength="8" autocomplete="new-password" placeholder="留空则不加密；填写则 AES-256-GCM 加密，恢复时需输入">
+        </div>
       </div>
     </div>
     <div class="modal__foot">
       <button class="btn btn--ghost" type="button" data-close="dbBackup">取消</button>
       <button class="btn btn--primary" type="submit"><?= icon('save', 14) ?>开始备份</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="restoreBackup">
+  <form method="post" action="<?= url('/backups/restore') ?>" data-confirm="恢复会覆盖现有数据，确定继续？">
+    <?= csrf_field() ?>
+    <input type="hidden" name="kind" id="rstKind" value="">
+    <input type="hidden" name="name" id="rstName" value="">
+    <input type="hidden" name="site_id" id="rstSiteId" value="">
+    <input type="hidden" name="db_name" id="rstDbName" value="">
+    <div class="modal__head">
+      <h3>恢复备份</h3>
+      <button class="icon-btn" type="button" data-close="restoreBackup"><?= icon('x', 14) ?></button>
+    </div>
+    <div class="modal__body">
+      <p class="small muted" id="rstHint">将把备份内容覆盖到目标。</p>
+      <p class="small">目标：<strong class="mono" id="rstTarget"></strong></p>
+      <div class="field mt-12">
+        <label>解密口令</label>
+        <input class="input" type="password" name="password" id="rstPwd" autocomplete="off" placeholder="未加密的备份可留空">
+        <span class="hint" id="rstEncHint">该备份未加密，口令可留空</span>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" type="button" data-close="restoreBackup">取消</button>
+      <button class="btn btn--danger" type="submit"><?= icon('refresh', 14) ?>确认恢复</button>
     </div>
   </form>
 </dialog>

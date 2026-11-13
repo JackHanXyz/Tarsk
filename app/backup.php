@@ -19,7 +19,9 @@ function backup_dir(): string
  */
 function backup_meta(string $file): ?array
 {
-    $base = basename($file);
+    $name = basename($file);
+    $encrypted = str_ends_with(strtolower($name), '.enc');
+    $base = $encrypted ? substr($name, 0, -4) : $name;
     $kind = 'other';
     $target = '';
     if (preg_match('/^site_(.+?)_(\d{8}_\d{6})\.zip$/', $base, $m)) {
@@ -39,9 +41,10 @@ function backup_meta(string $file): ?array
     }
     return [
         'file' => $file,
-        'name' => $base,
+        'name' => $name,
         'kind' => $kind,
         'target' => $target,
+        'encrypted' => $encrypted,
         'size' => (int)@filesize($file),
         'mtime' => (int)@filemtime($file),
     ];
@@ -56,7 +59,7 @@ function backup_list(): array
             continue;
         }
         $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
-        if ($ext !== 'zip' && $ext !== 'sql') {
+        if ($ext !== 'zip' && $ext !== 'sql' && $ext !== 'enc') {
             continue;
         }
         $meta = backup_meta($dir . '/' . $entry);
@@ -88,7 +91,7 @@ function backup_tar_bin(): string
 /**
  * 站点备份：打包站点目录为 zip（PHP zip 扩展或系统 bsdtar）
  */
-function backup_site_create(int $siteId): array
+function backup_site_create(int $siteId, string $password = ''): array
 {
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId]);
     if (!$site) {
@@ -151,10 +154,23 @@ function backup_site_create(int $siteId): array
     }
 
     $size = (int)@filesize($file);
+    $encNote = '';
+    if ($password !== '') {
+        $encFile = $file . '.enc';
+        $enc = backup_encrypt_file($file, $encFile, $password);
+        if (!$enc['ok']) {
+            @unlink($encFile);
+            return ['ok' => false, 'message' => $enc['message']];
+        }
+        @unlink($file);
+        $file = $encFile;
+        $size = (int)@filesize($file);
+        $encNote = '，已 AES-256-GCM 加密';
+    }
     backup_prune();
     return [
         'ok' => true,
-        'message' => '站点备份完成' . ($count > 0 ? '，共 ' . $count . ' 个文件' : '') . '（' . bytes($size) . '）',
+        'message' => '站点备份完成' . ($count > 0 ? '，共 ' . $count . ' 个文件' : '') . '（' . bytes($size) . '）' . $encNote,
         'file' => $file,
     ];
 }
@@ -162,7 +178,7 @@ function backup_site_create(int $siteId): array
 /**
  * 数据库备份：导出到备份目录
  */
-function backup_db_create(string $dbName): array
+function backup_db_create(string $dbName, string $password = ''): array
 {
     $dbName = trim($dbName);
     if ($dbName === '' || !preg_match('/^[A-Za-z0-9_\-.$]+$/', $dbName)) {
@@ -170,12 +186,154 @@ function backup_db_create(string $dbName): array
     }
     $file = backup_dir() . '/db_' . preg_replace('/[^A-Za-z0-9._-]/', '_', $dbName) . '_' . date('Ymd_His') . '.sql';
     $result = mysql_dump($dbName, $file);
+    if ($result['ok'] && $password !== '') {
+        $encFile = $file . '.enc';
+        $enc = backup_encrypt_file($file, $encFile, $password);
+        if (!$enc['ok']) {
+            @unlink($encFile);
+            return ['ok' => false, 'message' => $enc['message']];
+        }
+        @unlink($file);
+        $result['message'] = ($result['message'] ?? '数据库备份完成') . '，已 AES-256-GCM 加密';
+        $result['file'] = $encFile;
+    }
     if ($result['ok']) {
         backup_prune();
     }
     return $result;
 }
 
+/**
+ * 备份加密：AES-256-GCM 分块流式加密，口令经 PBKDF2-SHA256(120k) 派生。
+ * 文件格式：MAGIC(8) + salt(16) + 重复[ len(4) + iv(12) + tag(16) + ciphertext ] + len=0
+ */
+const BACKUP_ENC_MAGIC = 'TRSKENC1';
+
+function backup_crypt_key(string $password, string $salt): string
+{
+    return hash_pbkdf2('sha256', $password, $salt, 120000, 32, true);
+}
+
+function backup_encrypt_file(string $src, string $dst, string $password): array
+{
+    if (strlen($password) < 8) {
+        return ['ok' => false, 'message' => '加密口令至少 8 位'];
+    }
+    $in = @fopen($src, 'rb');
+    if ($in === false) {
+        return ['ok' => false, 'message' => '无法读取源文件'];
+    }
+    $out = @fopen($dst, 'wb');
+    if ($out === false) {
+        fclose($in);
+        return ['ok' => false, 'message' => '无法写入加密文件'];
+    }
+    $salt = random_bytes(16);
+    $key = backup_crypt_key($password, $salt);
+    fwrite($out, BACKUP_ENC_MAGIC . $salt);
+    while (($chunk = fread($in, 1048576)) !== false && $chunk !== '') {
+        $iv = random_bytes(12);
+        $tag = '';
+        $ct = openssl_encrypt($chunk, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, '', 16);
+        if ($ct === false) {
+            fclose($in);
+            fclose($out);
+            @unlink($dst);
+            return ['ok' => false, 'message' => '加密失败（openssl 不可用？）'];
+        }
+        fwrite($out, pack('N', strlen($ct)) . $iv . $tag . $ct);
+    }
+    fwrite($out, pack('N', 0));
+    fclose($in);
+    fclose($out);
+    return ['ok' => true, 'message' => '加密完成'];
+}
+
+function backup_decrypt_file(string $src, string $dst, string $password): array
+{
+    $in = @fopen($src, 'rb');
+    if ($in === false) {
+        return ['ok' => false, 'message' => '无法读取加密备份'];
+    }
+    $magic = fread($in, 8);
+    if ($magic !== BACKUP_ENC_MAGIC) {
+        fclose($in);
+        return ['ok' => false, 'message' => '不是有效的加密备份文件'];
+    }
+    $salt = fread($in, 16);
+    if ($salt === false || strlen($salt) !== 16) {
+        fclose($in);
+        return ['ok' => false, 'message' => '加密备份头部损坏'];
+    }
+    $key = backup_crypt_key($password, $salt);
+    $out = @fopen($dst, 'wb');
+    if ($out === false) {
+        fclose($in);
+        return ['ok' => false, 'message' => '无法写入临时文件'];
+    }
+    while (true) {
+        $lenRaw = fread($in, 4);
+        if ($lenRaw === false || strlen($lenRaw) < 4) {
+            fclose($in);
+            fclose($out);
+            @unlink($dst);
+            return ['ok' => false, 'message' => '加密备份不完整'];
+        }
+        $len = unpack('N', $lenRaw)[1];
+        if ($len === 0) {
+            break;
+        }
+        $iv = fread($in, 12);
+        $tag = fread($in, 16);
+        $ct = $len > 0 ? fread($in, $len) : '';
+        if ($iv === false || $tag === false || $ct === false || strlen($ct) !== $len) {
+            fclose($in);
+            fclose($out);
+            @unlink($dst);
+            return ['ok' => false, 'message' => '加密备份数据被截断'];
+        }
+        $plain = openssl_decrypt($ct, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        if ($plain === false) {
+            fclose($in);
+            fclose($out);
+            @unlink($dst);
+            return ['ok' => false, 'message' => '解密失败：口令错误或文件已损坏'];
+        }
+        fwrite($out, $plain);
+    }
+    fclose($in);
+    fclose($out);
+    return ['ok' => true, 'message' => '解密完成'];
+}
+
+/**
+ * 若备份是加密的，解密到临时文件；返回 [file, tempToClean]
+ */
+function backup_prepare_readable(string $file, string $password): array
+{
+    if (!str_ends_with(strtolower($file), '.enc')) {
+        return ['ok' => true, 'file' => $file, 'temp' => null];
+    }
+    if ($password === '') {
+        return ['ok' => false, 'message' => '该备份已加密，请输入解密口令'];
+    }
+    $inner = substr(basename($file), 0, -4);
+    $ext = strtolower(pathinfo($inner, PATHINFO_EXTENSION));
+    $tmpDir = storage_path('tmp');
+    if (!is_dir($tmpDir)) {
+        @mkdir($tmpDir, 0777, true);
+    }
+    $tmp = $tmpDir . '/restore_' . bin2hex(random_bytes(6)) . '.' . ($ext === 'sql' ? 'sql' : 'zip');
+    $r = backup_decrypt_file($file, $tmp, $password);
+    if (!$r['ok']) {
+        return $r;
+    }
+    return ['ok' => true, 'file' => $tmp, 'temp' => $tmp];
+}
+
+/**
+ * 删除备份文件（含加密包）
+ */
 function backup_delete(string $name): array
 {
     $file = backup_resolve($name);
@@ -191,7 +349,7 @@ function backup_delete(string $name): array
 function backup_resolve(string $name): ?string
 {
     $base = basename(str_replace('\\', '/', $name));
-    if ($base === '' || !preg_match('/^[A-Za-z0-9._-]+\.(zip|sql)$/i', $base)) {
+    if ($base === '' || !preg_match('/^[A-Za-z0-9._-]+\.(zip|sql)(\.enc)?$/i', $base)) {
         return null;
     }
     $file = backup_dir() . '/' . $base;
@@ -201,15 +359,30 @@ function backup_resolve(string $name): ?string
 /**
  * 站点恢复：把备份 zip 解压覆盖到站点目录（拒绝路径穿越）
  */
-function backup_site_restore(string $name, int $siteId): array
+function backup_site_restore(string $name, int $siteId, string $password = ''): array
+{
+    $resolved = backup_resolve($name);
+    if ($resolved === null) {
+        return ['ok' => false, 'message' => '备份文件不存在'];
+    }
+    $prep = backup_prepare_readable($resolved, $password);
+    if (!$prep['ok']) {
+        return $prep;
+    }
+    try {
+        return backup_site_restore_from($prep['file'], $siteId);
+    } finally {
+        if (!empty($prep['temp'])) {
+            @unlink($prep['temp']);
+        }
+    }
+}
+
+function backup_site_restore_from(string $file, int $siteId): array
 {
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId]);
     if (!$site) {
         return ['ok' => false, 'message' => '站点不存在'];
-    }
-    $file = backup_resolve($name);
-    if ($file === null || !str_ends_with(strtolower($file), '.zip')) {
-        return ['ok' => false, 'message' => '备份文件不存在'];
     }
     $path = rtrim(str_replace('\\', '/', (string)$site['path']), '/');
     if (!is_dir($path)) {
@@ -271,12 +444,27 @@ function backup_site_restore(string $name, int $siteId): array
 /**
  * 数据库恢复：把 .sql 导入指定库（会覆盖同名表数据）
  */
-function backup_db_restore(string $name, string $dbName): array
+function backup_db_restore(string $name, string $dbName, string $password = ''): array
 {
-    $file = backup_resolve($name);
-    if ($file === null || !str_ends_with(strtolower($file), '.sql')) {
+    $resolved = backup_resolve($name);
+    if ($resolved === null) {
         return ['ok' => false, 'message' => '备份文件不存在'];
     }
+    $prep = backup_prepare_readable($resolved, $password);
+    if (!$prep['ok']) {
+        return $prep;
+    }
+    try {
+        return backup_db_restore_from($prep['file'], $dbName);
+    } finally {
+        if (!empty($prep['temp'])) {
+            @unlink($prep['temp']);
+        }
+    }
+}
+
+function backup_db_restore_from(string $file, string $dbName): array
+{
     $dbName = trim($dbName);
     if ($dbName === '' || !preg_match('/^[A-Za-z0-9_\-.$]+$/', $dbName)) {
         return ['ok' => false, 'message' => '数据库名不合法'];

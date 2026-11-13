@@ -278,6 +278,50 @@ $totalReq = (int)($stats['requests'] ?? 0);
 </section>
 <?php endif; ?>
 
+<?php if ($source): ?>
+<section class="card mt-18">
+  <div class="card__head">
+    <span class="card__title"><?= icon('terminal', 17) ?>实时追踪<span class="card__desc">每 3 秒增量拉取，只追加新行</span></span>
+    <div class="toolbar">
+      <label class="badge badge--muted" style="cursor:pointer"><input type="checkbox" id="tailFollow" checked style="margin-right:6px">自动滚动</label>
+      <button class="btn btn--ghost btn--sm" type="button" id="tailClear"><?= icon('trash', 13) ?>清屏</button>
+    </div>
+  </div>
+  <div class="card__body" style="padding:0">
+    <pre id="logTail" data-file="<?= e($source['key']) ?>" data-offset="<?= max(0, (int)$source['size'] - 8192) ?>" style="margin:0;padding:14px 16px;max-height:340px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;background:#0f1421;color:#c7d2fe;border-radius:0 0 12px 12px;white-space:pre-wrap;word-break:break-all"></pre>
+  </div>
+</section>
+<script>
+(function () {
+  var pre = document.getElementById('logTail');
+  if (!pre) { return; }
+  var file = pre.getAttribute('data-file');
+  var offset = parseInt(pre.getAttribute('data-offset'), 10) || 0;
+  var follow = document.getElementById('tailFollow');
+  var clearBtn = document.getElementById('tailClear');
+  if (clearBtn) { clearBtn.addEventListener('click', function () { pre.textContent = ''; }); }
+  var endpoint = <?= json_encode(url('/logs/tail')) ?>;
+  function tick() {
+    fetch(endpoint + '?file=' + encodeURIComponent(file) + '&offset=' + offset, { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) { return; }
+        if (d.rotated) { pre.textContent = ''; }
+        if (d.lines && d.lines.length) {
+          pre.textContent += d.lines.join('\n') + '\n';
+          if (pre.textContent.length > 524288) { pre.textContent = pre.textContent.slice(-524288); }
+          if (!follow || follow.checked) { pre.scrollTop = pre.scrollHeight; }
+        }
+        offset = d.offset;
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(tick, 3000); });
+  }
+  tick();
+})();
+</script>
+<?php endif; ?>
+
 <p class="hint mt-18">
   统计区间：<?= $stats['first_time'] ? e(date('Y-m-d H:i:s', (int)$stats['first_time'])) : '—' ?> ~ <?= $stats['last_time'] ? e(date('Y-m-d H:i:s', (int)$stats['last_time'])) : '—' ?>
   · 数据源 <span class="mono"><?= e($source['path']) ?></span>

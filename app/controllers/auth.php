@@ -102,7 +102,14 @@ function login_2fa_submit(): void
         redirect('/login/2fa');
     }
     $code = trim((string)($_POST['code'] ?? ''));
-    if (!totp_verify((string)$row['totp_secret'], $code)) {
+    $viaRecovery = false;
+    $ok = totp_verify((string)$row['totp_secret'], $code);
+    if (!$ok && strlen((string)preg_replace('/[^0-9A-Fa-f]/', '', $code)) === 10) {
+        // 不是 6 位动态码，按一次性恢复码处理
+        $ok = totp_recovery_consume((int)$row['id'], $code);
+        $viaRecovery = $ok;
+    }
+    if (!$ok) {
         usleep(300000);
         $guard = login_guard_fail($ip, $guardUser);
         log_action('两步验证失败', '账号 ' . $row['username'], 'warning', (int)$row['id'], (string)$row['username']);
@@ -112,6 +119,11 @@ function login_2fa_submit(): void
         redirect('/login/2fa');
     }
     login_guard_reset($ip, $guardUser);
+    if ($viaRecovery) {
+        $left = totp_recovery_remaining((int)$row['id']);
+        log_action('使用恢复码登录', '账号 ' . $row['username'] . '，剩余 ' . $left . ' 个恢复码', 'warning', (int)$row['id'], (string)$row['username']);
+        flash('warning', '已使用一次性恢复码登录，剩余 ' . $left . ' 个。建议尽快在「设置 → 两步验证」重新生成。');
+    }
     complete_login($row);
 }
 

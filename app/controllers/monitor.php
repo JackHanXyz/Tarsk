@@ -42,27 +42,25 @@ function monitor_page(): void
     $metrics = system_metrics();
     record_metrics_sample($metrics);
 
-    $rows = fetch_all(
-        'SELECT * FROM ' . t('monitor') . ' WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id ASC'
-    );
-
-    $series = [];
-    foreach ($rows as $row) {
-        $series[] = [
-            't' => date('H:i', strtotime($row['created_at'])),
-            'cpu' => (float)$row['cpu'],
-            'mem' => round(percent($row['mem_used'], $row['mem_total']), 1),
-            'disk' => round(percent($row['disk_used'], $row['disk_total']), 1),
-            'rx' => (int)$row['net_rx'],
-            'tx' => (int)$row['net_tx'],
-        ];
-    }
+    $range = (string)($_GET['range'] ?? '24h');
+    $data = metrics_series($range);
+    $rangeLabels = [
+        '1h' => '最近 1 小时',
+        '24h' => '24 小时',
+        '7d' => '7 天',
+        '30d' => '30 天',
+    ];
 
     render('monitor', [
         'title' => '监控',
         'active' => 'monitor',
         'metrics' => $metrics,
-        'series' => $series,
+        'series' => $data['series'],
+        'range' => $data['range'],
+        'rangeLabel' => $rangeLabels[$data['range']],
+        'rangeLabels' => $rangeLabels,
+        'seriesUnit' => $data['unit'],
+        'digest' => metrics_digest(),
         'services' => services_status(),
         'drives' => $metrics['drives'] ?? [],
     ], 'app');

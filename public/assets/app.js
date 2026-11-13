@@ -143,6 +143,34 @@
     });
   });
 
+  /* 备份恢复弹层：按行填充目标、加密状态 */
+  $$('[data-restore]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var kind = btn.getAttribute('data-kind');
+      var enc = btn.getAttribute('data-enc') === '1';
+      var set = function (id, val) { var n = document.getElementById(id); if (n) { n.value = val; } };
+      set('rstKind', kind);
+      set('rstName', btn.getAttribute('data-name') || '');
+      set('rstSiteId', btn.getAttribute('data-site-id') || '');
+      set('rstDbName', btn.getAttribute('data-db-name') || '');
+      var target = document.getElementById('rstTarget');
+      if (target) { target.textContent = btn.getAttribute('data-target') || ''; }
+      var hint = document.getElementById('rstHint');
+      if (hint) {
+        hint.textContent = kind === 'db'
+          ? '将把 SQL 导入数据库，同名表数据会被覆盖。'
+          : '将把备份文件覆盖到站点目录。';
+      }
+      var encHint = document.getElementById('rstEncHint');
+      if (encHint) {
+        encHint.textContent = enc ? '该备份已加密，请填写创建时的口令' : '该备份未加密，口令可留空';
+      }
+      var pwd = document.getElementById('rstPwd');
+      if (pwd) { pwd.value = ''; pwd.required = enc; }
+      openDialog('restoreBackup');
+    });
+  });
+
   $$('[data-close]').forEach(function (trigger) {
     trigger.addEventListener('click', function () { closeDialog(trigger.getAttribute('data-close')); });
   });

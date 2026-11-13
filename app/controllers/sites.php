@@ -13,6 +13,8 @@ function sites_page(): void
         $site['size'] = $site['exists'] ? dir_size((string)$site['path']) : 0;
         $site['conf'] = site_conf_path((string)$site['name']);
         $site['effective_port'] = site_effective_port($site);
+        $site['traffic_today'] = traffic_today_bytes((int)$site['id']);
+        $site['traffic_month'] = traffic_month_bytes((int)$site['id']);
     }
     unset($site);
 
@@ -208,6 +210,7 @@ function sites_update(int $id): void
     $connLimit = min(10000, max(0, (int)($_POST['conn_limit'] ?? 0)));
     $http2 = !empty($_POST['http2_enabled']) ? 1 : 0;
     $hsts = !empty($_POST['hsts_enabled']) ? 1 : 0;
+    $quota = min(1048576, max(0, (int)($_POST['traffic_quota_mb'] ?? 0)));
     if ($uploadSize !== '' && !preg_match('/^[1-9][0-9]*[kmg]?$/', $uploadSize)) {
         $uploadSize = '64m';
     }
@@ -225,8 +228,8 @@ function sites_update(int $id): void
     $php = sites_resolve_php($php, $notes);
 
     execute(
-        'UPDATE ' . t('sites') . ' SET domain = ?, domains = ?, php_version = ?, rewrite = ?, remark = ?, status = ?, proxy_enabled = ?, proxy_pass = ?, index_files = ?, force_https = ?, anti_leech = ?, open_basedir = ?, upload_size = ?, rate_limit = ?, rate_burst = ?, conn_limit = ?, http2_enabled = ?, hsts_enabled = ? WHERE id = ?',
-        [$domain, $domains, $php, $rewrite, $remark, $status, $proxyEnabled, $proxyPass, $indexFiles, $forceHttps, $antiLeech, $openBasedir, $uploadSize, $rateLimit, $rateBurst, $connLimit, $http2, $hsts, $id]
+        'UPDATE ' . t('sites') . ' SET domain = ?, domains = ?, php_version = ?, rewrite = ?, remark = ?, status = ?, proxy_enabled = ?, proxy_pass = ?, index_files = ?, force_https = ?, anti_leech = ?, open_basedir = ?, upload_size = ?, rate_limit = ?, rate_burst = ?, conn_limit = ?, http2_enabled = ?, hsts_enabled = ?, traffic_quota_mb = ? WHERE id = ?',
+        [$domain, $domains, $php, $rewrite, $remark, $status, $proxyEnabled, $proxyPass, $indexFiles, $forceHttps, $antiLeech, $openBasedir, $uploadSize, $rateLimit, $rateBurst, $connLimit, $http2, $hsts, $quota, $id]
     );
     $site = fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$id]);
 

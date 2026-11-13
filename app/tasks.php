@@ -430,40 +430,46 @@ function task_site_check(int $siteId = 0): array
     $port = active_web_port();
     $okCount = 0;
     $failures = [];
+    $healed = [];
     foreach ($sites as $site) {
-        $host = trim((string)$site['domain']) !== '' ? (string)$site['domain'] : (string)$site['name'] . '.local';
-        $url = 'http://127.0.0.1:' . $port . '/';
-        $ctx = stream_context_create([
-            'http' => [
-                'method' => 'GET',
-                'header' => "Host: " . $host . "\r\nUser-Agent: Tarsk-Uptime/1.0\r\n",
-                'timeout' => 8,
-                'ignore_errors' => true,
-            ],
-        ]);
-        $body = @file_get_contents($url, false, $ctx);
-        $status = 0;
-        foreach ($http_response_header ?? [] as $line) {
-            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $line, $m)) {
-                $status = (int)$m[1];
-            }
-        }
+        $status = function_exists('site_probe_status')
+            ? site_probe_status($site, $port)
+            : 0;
         if ($status >= 200 && $status < 400) {
             $okCount++;
-        } else {
-            $failures[] = $site['name'] . '（HTTP ' . ($status > 0 ? $status : '超时') . '）';
+            continue;
         }
+
+        $entry = $site['name'] . '（HTTP ' . ($status > 0 ? $status : '超时') . '）';
+
+        // 告警自愈：重建 vhost / 重启 PHP / 重启 Nginx，再探一次
+        if (function_exists('self_heal_site') && self_heal_enabled()) {
+            $heal = self_heal_site($site);
+            if ($heal['ok']) {
+                $healed[] = $site['name'] . '（' . implode('；', $heal['steps']) . '）';
+                log_action('站点自愈', $site['name'] . '：' . implode('；', $heal['steps']), 'warning');
+                continue;
+            }
+            if ($heal['steps']) {
+                $entry .= '；自愈失败：' . $heal['message'] . '（' . implode('；', $heal['steps']) . '）';
+            } else {
+                $entry .= '；未自愈：' . $heal['message'];
+            }
+        }
+
+        $failures[] = $entry;
     }
 
+    $healNote = $healed ? '；已自动修复：' . implode('；', $healed) : '';
     if ($failures) {
-        $message = '以下站点巡检失败：' . implode('；', $failures);
+        $message = '以下站点巡检失败：' . implode('；', $failures) . $healNote;
         $notify = notify('站点巡检失败', $message, 'danger', ['kind' => 'site']);
         return [
             'ok' => false,
             'message' => $message . ($notify ? '（已发送通知）' : ''),
         ];
     }
-    return ['ok' => true, 'message' => '全部 ' . $okCount . ' 个站点访问正常'];
+    return ['ok' => true, 'message' => '全部 ' . $okCount . ' 个站点访问正常' . $healNote];
 }
 
 /**

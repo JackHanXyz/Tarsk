@@ -33,10 +33,11 @@ function backups_page(): void
 function backups_create(): void
 {
     $kind = (string)($_POST['kind'] ?? '');
+    $password = (string)($_POST['password'] ?? '');
     if ($kind === 'site') {
-        $result = backup_site_create((int)($_POST['site_id'] ?? 0));
+        $result = backup_site_create((int)($_POST['site_id'] ?? 0), $password);
     } elseif ($kind === 'db') {
-        $result = backup_db_create((string)($_POST['db_name'] ?? ''));
+        $result = backup_db_create((string)($_POST['db_name'] ?? ''), $password);
     } else {
         $result = ['ok' => false, 'message' => '未知的备份类型'];
     }
@@ -73,10 +74,11 @@ function backups_restore(): void
 {
     $name = (string)($_POST['name'] ?? '');
     $kind = (string)($_POST['kind'] ?? '');
+    $password = (string)($_POST['password'] ?? '');
     if ($kind === 'site') {
-        $result = backup_site_restore($name, (int)($_POST['site_id'] ?? 0));
+        $result = backup_site_restore($name, (int)($_POST['site_id'] ?? 0), $password);
     } elseif ($kind === 'db') {
-        $result = backup_db_restore($name, (string)($_POST['db_name'] ?? ''));
+        $result = backup_db_restore($name, (string)($_POST['db_name'] ?? ''), $password);
     } else {
         $result = ['ok' => false, 'message' => '未知的恢复类型'];
     }

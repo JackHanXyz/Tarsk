@@ -116,6 +116,58 @@ function logs_export(): void
 }
 
 /**
+ * 日志实时追踪：按字节偏移增量返回新增行，供前端轮询追加
+ */
+function logs_tail(): void
+{
+    $key = (string)($_GET['file'] ?? '');
+    $offset = max(0, (int)($_GET['offset'] ?? 0));
+    $source = $key !== '' ? log_source_by_key($key) : null;
+    if ($source === null) {
+        json_response(['ok' => false, 'message' => '日志文件不存在', 'lines' => [], 'offset' => 0], 404);
+    }
+    $path = $source['path'];
+    $size = (int)@filesize($path);
+    $rotated = $size < $offset;
+    if ($rotated) {
+        $offset = 0;
+    }
+    $fh = @fopen($path, 'rb');
+    if ($fh === false) {
+        json_response(['ok' => false, 'message' => '无法读取日志', 'lines' => [], 'offset' => $offset], 500);
+    }
+    fseek($fh, $offset);
+    $chunk = (string)fread($fh, 65536);
+    $newOffset = (int)ftell($fh);
+    fclose($fh);
+
+    $lines = [];
+    if ($chunk !== '') {
+        $parts = preg_split('/\r?\n/', $chunk);
+        $tail = array_pop($parts);
+        if ($tail !== '' && $newOffset < $size) {
+            // 最后一段可能是不完整的一行，下一轮重读
+            $newOffset -= strlen($tail);
+        } else {
+            $parts[] = $tail;
+        }
+        foreach ($parts as $line) {
+            if ($line !== '') {
+                $lines[] = $line;
+            }
+        }
+    }
+
+    json_response([
+        'ok' => true,
+        'lines' => $lines,
+        'offset' => $newOffset,
+        'size' => $size,
+        'rotated' => $rotated,
+    ]);
+}
+
+/**
  * 访问日志分析报表：PV/UV、状态码、Top URL、来源、蜘蛛、按小时趋势
  */
 function logs_analyze_page(): void

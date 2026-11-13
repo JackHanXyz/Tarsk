@@ -9,11 +9,17 @@ function settings_page(): void
         ? @disk_free_space((string)(getenv('SystemDrive') ?: 'C:') . '/')
         : @disk_free_space('/');
 
+    // 恢复码明文只在生成后展示一次
+    $recoveryNew = $_SESSION['tfa_recovery_new'] ?? [];
+    unset($_SESSION['tfa_recovery_new']);
+
     render('settings', [
         'title' => '设置',
         'active' => 'settings',
         'user' => $user,
         'mysql' => $mysql,
+        'recoveryNew' => $recoveryNew,
+        'recoveryLeft' => $user ? totp_recovery_remaining((int)$user['id']) : 0,
         'info' => [
             'platform' => PHP_OS_FAMILY,
             'php' => PHP_VERSION,
@@ -205,6 +211,9 @@ function settings_notify_save(): void
         'alert_mem' => (string)max(1, min(100, (int)($_POST['alert_mem'] ?? 90))),
         'alert_disk' => (string)max(1, min(100, (int)($_POST['alert_disk'] ?? 90))),
         'alert_cooldown' => (string)max(5, min(1440, (int)($_POST['alert_cooldown'] ?? 30))),
+        'self_heal_enabled' => (string)($_POST['self_heal_enabled'] ?? '0') === '1' ? '1' : '0',
+        'self_heal_cooldown' => (string)max(60, min(86400, (int)($_POST['self_heal_cooldown'] ?? 600))),
+        'self_heal_max_hour' => (string)max(1, min(20, (int)($_POST['self_heal_max_hour'] ?? 3))),
     ];
     foreach ($fields as $key => $value) {
         setting_set($key, $value);
@@ -263,8 +272,32 @@ function settings_2fa_enable(): void
     }
     execute('UPDATE ' . t('users') . ' SET totp_secret = ?, totp_enabled = 1 WHERE id = ?', [$secret, $user['id']]);
     unset($_SESSION['tfa_setup_secret']);
+    $codes = totp_recovery_generate((int)$user['id']);
+    $_SESSION['tfa_recovery_new'] = $codes['plain'];
     log_action('开启两步验证', (string)$user['username'], 'warning');
-    flash('success', '两步验证已开启，下次登录需输入动态验证码');
+    flash('success', '两步验证已开启。下面的恢复码只显示这一次，请立刻保存到安全的地方。');
+    redirect('/settings');
+}
+
+/**
+ * 重新生成一次性恢复码（需当前动态验证码确认）
+ */
+function settings_2fa_recovery(): void
+{
+    $user = require_login();
+    if ((int)($user['totp_enabled'] ?? 0) !== 1) {
+        flash('error', '请先开启两步验证');
+        redirect('/settings');
+    }
+    $code = trim((string)($_POST['code'] ?? ''));
+    if (!totp_verify((string)($user['totp_secret'] ?? ''), $code)) {
+        flash('error', '验证码不正确，未重新生成恢复码');
+        redirect('/settings');
+    }
+    $codes = totp_recovery_generate((int)$user['id']);
+    $_SESSION['tfa_recovery_new'] = $codes['plain'];
+    log_action('重新生成恢复码', (string)$user['username'], 'warning');
+    flash('success', '已生成新的恢复码，旧恢复码全部失效。');
     redirect('/settings');
 }
 
