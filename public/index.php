@@ -36,6 +36,18 @@ if ($entrance !== '' && !current_user()) {
     }
 }
 
+// REST API：Bearer Token 认证，不走会话与 CSRF
+if (str_starts_with($path, '/api/v1/')) {
+    api_dispatch($method, $path);
+    exit;
+}
+
+// Git Webhook：免登录，凭 secret 寻址
+if (str_starts_with($path, '/webhook/')) {
+    git_webhook_dispatch($path);
+    exit;
+}
+
 // 登录页与两步验证页无需完整会话
 $guestPaths = ['/login', '/login/2fa'];
 
@@ -51,8 +63,15 @@ foreach ($routes as [$routeMethod, $pattern, $file, $function]) {
             verify_csrf();
         }
         if (!current_user() && !in_array($path, $guestPaths, true)) {
+            if (preg_match('#^/(sites|store)/api(?:/|$)|^/store/install-status$#', $path)) {
+                json_response(['ok' => false, 'message' => '请先登录'], 401);
+            }
             flash('error', '请先登录');
             redirect('/login');
+        }
+        // 角色权限：按「方法 + 路径」判定，不通过直接 403
+        if (current_user() && !in_array($path, $guestPaths, true)) {
+            authz_enforce($method, $path);
         }
         $controller = str_starts_with($file, 'plugin:')
             ? substr($file, 7)

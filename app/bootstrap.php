@@ -9,6 +9,16 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/system.php';
 require_once __DIR__ . '/runtime.php';
 require_once __DIR__ . '/site_vhost.php';
+require_once __DIR__ . '/envconfig.php';
+require_once __DIR__ . '/loganalytics.php';
+require_once __DIR__ . '/dbadmin.php';
+require_once __DIR__ . '/filesecurity.php';
+require_once __DIR__ . '/authz.php';
+require_once __DIR__ . '/api.php';
+require_once __DIR__ . '/remote.php';
+require_once __DIR__ . '/projects.php';
+require_once __DIR__ . '/gitdeploy.php';
+require_once __DIR__ . '/sysadmin.php';
 require_once __DIR__ . '/totp.php';
 require_once __DIR__ . '/plugins.php';
 require_once __DIR__ . '/panel_ssl.php';
@@ -194,6 +204,9 @@ function verify_csrf(): void
 {
     $token = $_POST['_token'] ?? '';
     if (!hash_equals(csrf_token(), (string)$token)) {
+        if (preg_match('#^/(sites|store)/api(?:/|$)#', current_path())) {
+            json_response(['ok' => false, 'message' => 'CSRF 校验失败，请重新获取 token'], 419);
+        }
         http_response_code(419);
         exit('页面已过期，请刷新后重试。');
     }
@@ -252,6 +265,10 @@ function attempt_login(string $username, string $password, string $ip): bool
     $row = fetch_one('SELECT * FROM ' . t('users') . ' WHERE username = ?', [$username]);
     if (!$row || !password_verify($password, $row['password_hash'])) {
         log_action('登录失败', '账号 ' . $username, 'warning', null, $username);
+        return false;
+    }
+    if (($row['status'] ?? 'enabled') === 'disabled') {
+        log_action('登录被拒', '账号已停用：' . $username, 'warning', null, $username);
         return false;
     }
     session_regenerate_id(true);
@@ -512,10 +529,10 @@ ensure_storage();
 /* --------------------------- 自动增量迁移 --------------------------- */
 
 try {
-    if ((int)setting('schema_version', '1') < 4) {
+    if ((int)setting('schema_version', '1') < 9) {
         install_schema();
         seed_data();
-        setting_set('schema_version', '4');
+        setting_set('schema_version', '9');
     }
 } catch (Throwable $e) {
     // 数据库未就绪时跳过，安装向导会再次执行

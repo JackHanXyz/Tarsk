@@ -501,10 +501,15 @@ function runtime_configure_nginx(string $root): void
         . "    default_type  application/octet-stream;\n"
         . "    sendfile      on;\n"
         . "    keepalive_timeout  65;\n"
+        . "    client_max_body_size 64m;\n"
         . "    access_log    logs/access.log;\n"
+        . "    include       tarsk-zones.conf;\n"
         . "    include       vhosts/*.conf;\n"
         . "}\n";
     file_put_contents($root . '/conf/nginx.conf', $main);
+    if (function_exists('env_ensure_zones')) {
+        env_ensure_zones();
+    }
 
     $default = "server {\n"
         . "    listen " . $port . " default_server;\n"
@@ -639,6 +644,9 @@ function runtime_nginx_start(): array
         return ['ok' => false, 'message' => '未找到 Nginx 可执行文件'];
     }
     $bin = $root . '/nginx.exe';
+    if (function_exists('env_ensure_zones')) {
+        env_ensure_zones();
+    }
     $test = ps_run('& \'' . $bin . '\' -p \'' . $root . '/\' -c conf/nginx.conf -t 2>&1', 20);
     if ($test['code'] !== 0) {
         return ['ok' => false, 'message' => 'Nginx 配置检测失败：' . ($test['output'] ?: $test['error'])];
@@ -693,11 +701,30 @@ function runtime_nginx_stop(): array
 
 function runtime_nginx_reload(): bool
 {
+    if (PHP_OS_FAMILY === 'Linux') {
+        $bin = function_exists('find_nginx_bin') ? find_nginx_bin() : '';
+        if ($bin === '') { return false; }
+        $test = function_exists('nginx_conf_test') ? nginx_conf_test() : ['ok' => false];
+        if (empty($test['ok'])) { return false; }
+        foreach (['systemctl reload nginx 2>&1', 'service nginx reload 2>&1', escapeshellarg($bin) . ' -s reload 2>&1'] as $command) {
+            $res = run_cmd($command, 25);
+            if ($res['code'] === 0) { return true; }
+        }
+        return false;
+    }
     $root = managed_nginx_root();
     if ($root === null || !is_file($root . '/logs/nginx.pid')) {
         return false;
     }
+    // 进程不在时 reload 必然失败（残留 pid 文件会让人误以为成功）
+    if (!runtime_state('nginx')['running']) {
+        return false;
+    }
     $res = ps_run('& \'' . $root . '/nginx.exe\' -p \'' . $root . '/\' -c conf/nginx.conf -s reload 2>&1', 20);
+    $output = (string)($res['output'] ?? '') . ' ' . (string)($res['error'] ?? '');
+    if (stripos($output, 'error') !== false) {
+        return false;
+    }
     return $res['code'] === 0;
 }
 
@@ -706,12 +733,35 @@ function runtime_nginx_reload(): bool
  */
 function runtime_nginx_reopen(): bool
 {
+    if (PHP_OS_FAMILY === 'Linux') {
+        $bin = function_exists('find_nginx_bin') ? find_nginx_bin() : '';
+        if ($bin === '') { return false; }
+        $res = run_cmd(escapeshellarg($bin) . ' -s reopen 2>&1', 20);
+        return $res['code'] === 0;
+    }
     $root = managed_nginx_root();
     if ($root === null || !is_file($root . '/logs/nginx.pid')) {
         return false;
     }
     $res = ps_run('& \'' . $root . '/nginx.exe\' -p \'' . $root . '/\' -c conf/nginx.conf -s reopen 2>&1', 20);
     return $res['code'] === 0;
+}
+
+/**
+ * php.ini 里的 extension_dir / 日志 / session 路径都是绝对路径，
+ * 项目目录被移动或复制后旧路径可能失效，启动前检测并重建配置。
+ */
+function runtime_php_ini_heal(string $root): void
+{
+    $ini = $root . '/php.ini';
+    $content = is_file($ini) ? (string)@file_get_contents($ini) : '';
+    if (preg_match('#extension_dir\s*=\s*"([^"]*)"#', $content, $m)) {
+        $dir = str_replace('\\', '/', $m[1]);
+        if ($dir !== '' && is_dir($dir)) {
+            return;
+        }
+    }
+    runtime_configure_php($root);
 }
 
 function runtime_php_start(string $key = 'php'): array
@@ -722,6 +772,7 @@ function runtime_php_start(string $key = 'php'): array
     }
     $port = runtime_port($key);
     @mkdir($root . '/logs', 0777, true);
+    runtime_php_ini_heal($root);
     if (PHP_OS_FAMILY === 'Windows') {
         // 使用 Start-Process 启动，进程与面板/父进程解耦，面板重启后 PHP-CGI 仍存活；
         // 不要加输出重定向：目标日志被上一次进程占用会让 Start-Process 永久阻塞。

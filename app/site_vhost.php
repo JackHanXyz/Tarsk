@@ -11,6 +11,81 @@ function site_conf_path(string $name): string
 }
 
 /**
+ * 站点自定义配置片段：被 include 进该站点的每个 server 块
+ */
+function site_extra_conf_path(array $site): string
+{
+    return dirname(site_conf_path((string)$site['name'])) . '/extra/' . $site['name'] . '.conf';
+}
+
+function site_extra_conf(array $site): string
+{
+    $path = site_extra_conf_path($site);
+    return is_file($path) ? (string)@file_get_contents($path) : '';
+}
+
+/**
+ * 保存站点自定义配置：备份 → 写入 → 重建 vhost → nginx -t → 失败回滚
+ */
+function site_extra_apply(array $site, string $content): array
+{
+    $path = site_extra_conf_path($site);
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0777, true);
+    }
+    $exists = is_file($path);
+    $original = $exists ? (string)@file_get_contents($path) : '';
+
+    if (trim($content) === '') {
+        if (!$exists) {
+            return ['ok' => true, 'message' => '自定义配置为空，无需变更'];
+        }
+        if (function_exists('env_backup')) {
+            env_backup($path, 'site-extra');
+        }
+        @unlink($path);
+        $result = write_site_vhost($site);
+        return ['ok' => true, 'message' => '自定义配置已清空；' . $result['message']];
+    }
+
+    if (function_exists('env_backup')) {
+        env_backup($path, 'site-extra');
+    }
+    if (@file_put_contents($path, $content) === false) {
+        return ['ok' => false, 'message' => '写入失败：' . $path];
+    }
+
+    $written = write_site_vhost($site, false);
+    if (!$written['ok']) {
+        return $written;
+    }
+
+    $managed = function_exists('managed_nginx_installed') && managed_nginx_installed();
+    if ($managed && function_exists('nginx_conf_test')) {
+        $test = nginx_conf_test();
+        if (!$test['ok']) {
+            // 回滚：还原文件（或删除新增文件）并重建 vhost
+            if ($exists) {
+                @file_put_contents($path, $original);
+            } else {
+                @unlink($path);
+            }
+            write_site_vhost($site, false);
+            return ['ok' => false, 'message' => '配置未通过 nginx -t，已回滚：' . $test['message']];
+        }
+        if (function_exists('runtime_nginx_reload')) {
+            runtime_nginx_reload();
+        }
+    }
+
+    if (function_exists('log_action')) {
+        log_action('修改站点自定义配置', (string)$site['name'], 'warning');
+    }
+    return ['ok' => true, 'message' => '自定义配置已保存并生效'];
+}
+
+/**
  * 当前 Web 服务监听端口：接管运行环境后统一走托管 Nginx 端口，避免与系统 Nginx 冲突。
  */
 function active_web_port(): int
@@ -119,7 +194,10 @@ function site_proxy_target(array $site): string
     if ($target === '') {
         return '';
     }
-    if (!preg_match('#^https?://[A-Za-z0-9._\-]+(:\d+)?(/?[^\s;{}]*)?$#', $target)) {
+    if (!preg_match('#^https?://[A-Za-z0-9._-]+(?::([0-9]{1,5}))?(/[A-Za-z0-9._~!%&()+,=:@/-]*)?$#', $target, $m)) {
+        return '';
+    }
+    if (isset($m[1]) && $m[1] !== '' && ((int)$m[1] < 1 || (int)$m[1] > 65535)) {
         return '';
     }
     return rtrim($target, '/') ?: $target;
@@ -162,6 +240,50 @@ function site_index_files(array $site): string
     return $files ? implode(' ', array_slice(array_unique($files), 0, 6)) : 'index.html index.htm index.php';
 }
 
+/**
+ * 站点上传大小：站点级 > 全局设置 > 64m
+ */
+function site_upload_limit(array $site): string
+{
+    $value = strtolower(trim((string)($site['upload_size'] ?? '')));
+    if ($value === '') {
+        // 回落到全局 Nginx 配置里的值
+        $value = '64m';
+        if (function_exists('nginx_conf_path')) {
+            $confPath = nginx_conf_path();
+            if ($confPath !== null) {
+                $conf = (string)@file_get_contents($confPath);
+                if (preg_match('/client_max_body_size\s+([0-9]+[kmg]?)\s*;/i', $conf, $m)) {
+                    $value = strtolower($m[1]);
+                }
+            }
+        }
+    }
+    if (!preg_match('/^[1-9][0-9]*[kmg]?$/', $value)) {
+        return '64m';
+    }
+    return $value;
+}
+
+/**
+ * 站点限流：limit_req + limit_conn（共享内存区由 tarsk-zones.conf 提供）
+ */
+function site_rate_limit_lines(array $site): array
+{
+    $lines = [];
+    $rate = (int)($site['rate_limit'] ?? 0);
+    if ($rate > 0) {
+        $burst = (int)($site['rate_burst'] ?? 0);
+        $zone = function_exists('site_rate_zone') ? site_rate_zone($rate) : 'tarsk_req';
+        $lines[] = 'limit_req zone=' . $zone . ' burst=' . ($burst > 0 ? $burst : max(1, $rate * 2)) . ' nodelay;';
+    }
+    $conn = (int)($site['conn_limit'] ?? 0);
+    if ($conn > 0) {
+        $lines[] = 'limit_conn tarsk_conn ' . $conn . ';';
+    }
+    return $lines;
+}
+
 function site_vhost_content(array $site): string
 {
     $serverNames = site_server_names($site);
@@ -170,6 +292,13 @@ function site_vhost_content(array $site): string
     $phpPort = site_php_port($site);
     $proxy = site_proxy_target($site);
     $index = site_index_files($site);
+    $maxBody = site_upload_limit($site);
+    $rateLimit = site_rate_limit_lines($site);
+    $hsts = !empty($site['hsts_enabled']);
+    $extraPath = str_replace('\\', '/', site_extra_conf_path($site));
+    $extraInclude = is_file($extraPath)
+        ? ['', '    # 站点自定义配置（站点详情页可编辑）', '    include "' . $extraPath . '";']
+        : [];
 
     $cert = null;
     if (!empty($site['ssl_enabled'])) {
@@ -188,12 +317,26 @@ function site_vhost_content(array $site): string
         '    server_name ' . $serverNames . ';',
         '    root "' . $path . '";',
         '    index ' . $index . ';',
-        '    client_max_body_size 64m;',
+        '    client_max_body_size ' . $maxBody . ';',
     ];
+    foreach ($rateLimit as $rule) {
+        $lines[] = '    ' . $rule;
+    }
+    foreach ($extraInclude as $line) {
+        $lines[] = $line;
+    }
 
+    $lines[] = '';
+    $lines[] = '    location ^~ /.well-known/acme-challenge/ {';
+    $lines[] = '        root "' . $path . '";';
+    $lines[] = '        default_type text/plain;';
+    $lines[] = '        try_files $uri =404;';
+    $lines[] = '    }';
     if ($forceHttps) {
         $lines[] = '';
-        $lines[] = '    return 301 https://$host$request_uri;';
+        $lines[] = '    location / {';
+        $lines[] = '        return 301 https://$host$request_uri;';
+        $lines[] = '    }';
         $lines[] = '}';
     } else {
         $lines[] = '';
@@ -243,12 +386,27 @@ function site_vhost_content(array $site): string
     }
 
     if ($cert && is_file((string)$cert['cert_path'])) {
+        $http2 = !empty($site['http2_enabled']);
+        $http2OnDirective = $http2 && function_exists('nginx_supports_http2_directive') && nginx_supports_http2_directive();
         $lines[] = '';
         $lines[] = 'server {';
-        $lines[] = '    listen 443 ssl;';
+        $lines[] = '    listen 443 ssl' . ($http2 && !$http2OnDirective ? ' http2' : '') . ';';
+        if ($http2OnDirective) {
+            $lines[] = '    http2 on;';
+        }
         $lines[] = '    server_name ' . $serverNames . ';';
         $lines[] = '    root "' . $path . '";';
         $lines[] = '    index ' . $index . ';';
+        $lines[] = '    client_max_body_size ' . $maxBody . ';';
+        foreach ($rateLimit as $rule) {
+            $lines[] = '    ' . $rule;
+        }
+        if ($hsts) {
+            $lines[] = '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;';
+        }
+        foreach ($extraInclude as $line) {
+            $lines[] = $line;
+        }
         $lines[] = '    ssl_certificate "' . str_replace('\\', '/', (string)$cert['cert_path']) . '";';
         $lines[] = '    ssl_certificate_key "' . str_replace('\\', '/', (string)$cert['key_path']) . '";';
         $lines[] = '    ssl_protocols TLSv1.2 TLSv1.3;';
@@ -259,6 +417,9 @@ function site_vhost_content(array $site): string
             $lines[] = '        proxy_set_header X-Real-IP $remote_addr;';
             $lines[] = '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;';
             $lines[] = '        proxy_set_header X-Forwarded-Proto $scheme;';
+            $lines[] = '        proxy_http_version 1.1;';
+            $lines[] = '        proxy_read_timeout 300s;';
+            $lines[] = '        proxy_send_timeout 300s;';
             $lines[] = '    }';
         } else {
             $lines[] = '    location / {';
@@ -285,24 +446,51 @@ function site_vhost_content(array $site): string
     return implode("\n", $lines);
 }
 
-function write_site_vhost(array $site): array
+function write_site_vhost(array $site, bool $reload = true): array
 {
+    if (function_exists('env_ensure_zones')) {
+        env_ensure_zones();
+    }
+    if (PHP_OS_FAMILY === 'Linux' && nginx_vhost_dir() === '') {
+        return ['ok' => false, 'message' => '未找到系统 Nginx 已启用的 vhost include 目录；请确认 nginx -T 中包含 conf.d/*.conf/sites-enabled/*.conf，或配置 system.nginx_conf'];
+    }
     $conf = site_conf_path((string)$site['name']);
     $dir = dirname($conf);
     if (!is_dir($dir)) {
         @mkdir($dir, 0777, true);
     }
+    $hadConf = is_file($conf);
+    $previousConf = $hadConf ? (string)@file_get_contents($conf) : '';
     $written = @file_put_contents($conf, site_vhost_content($site));
     if ($written === false) {
         return ['ok' => false, 'message' => 'Nginx 配置写入失败：' . $conf];
+    }
+
+    if (PHP_OS_FAMILY === 'Linux') {
+        $test = function_exists('nginx_conf_test') ? nginx_conf_test() : ['ok' => false, 'message' => '缺少 Nginx 配置测试器'];
+        if (empty($test['ok'])) {
+            if ($hadConf) { @file_put_contents($conf, $previousConf, LOCK_EX); } else { @unlink($conf); }
+            return ['ok' => false, 'message' => 'Linux Nginx 配置校验失败，已回滚：' . ($test['message'] ?? '未知错误')];
+        }
+        if ($reload && !runtime_nginx_reload()) {
+            if ($hadConf) { @file_put_contents($conf, $previousConf, LOCK_EX); } else { @unlink($conf); }
+            runtime_nginx_reload();
+            return ['ok' => false, 'message' => 'Nginx reload 失败，已回滚站点配置；请检查服务权限与 systemd 状态'];
+        }
+        $note = 'Linux Nginx 配置校验通过：' . $conf;
+        $note .= $reload ? '；系统 Nginx 已重载' : '；待应用配置时重载';
+        return ['ok' => true, 'message' => $note];
     }
 
     $managed = function_exists('managed_nginx_installed') && managed_nginx_installed();
     $note = 'Nginx 配置已写入 ' . $conf;
     if ($managed) {
         $note .= '（由 Tarsk 托管 Nginx 加载，端口 ' . active_web_port() . '）';
-        if (function_exists('runtime_nginx_reload')) {
+        $nginxRunning = (bool)(runtime_state('nginx')['running'] ?? false);
+        if ($reload && $nginxRunning && function_exists('runtime_nginx_reload') && !runtime_nginx_reload()) {
+            if ($hadConf) { @file_put_contents($conf, $previousConf, LOCK_EX); } else { @unlink($conf); }
             runtime_nginx_reload();
+            return ['ok' => false, 'message' => '托管 Nginx reload 失败，已回滚站点配置'];
         }
     } elseif (function_exists('service_running') && service_running('nginx')) {
         $note .= '，执行 nginx -s reload 后生效';
@@ -313,14 +501,29 @@ function write_site_vhost(array $site): array
 function remove_site_vhost(array $site): array
 {
     $conf = site_conf_path((string)$site['name']);
-    if (is_file($conf)) {
-        @unlink($conf);
-        if (function_exists('runtime_nginx_reload')) {
-            runtime_nginx_reload();
-        }
-        return ['ok' => true, 'message' => '已移除 Nginx 配置 ' . $conf];
+    $extra = site_extra_conf_path($site);
+    $hadConf = is_file($conf);
+    $hadExtra = is_file($extra);
+    $previousConf = $hadConf ? (string)@file_get_contents($conf) : '';
+    $previousExtra = $hadExtra ? (string)@file_get_contents($extra) : '';
+    if ($hadConf && !@unlink($conf)) {
+        return ['ok' => false, 'message' => '无法移除 Nginx 站点配置：' . $conf];
     }
-    return ['ok' => true, 'message' => '未发现 Nginx 配置，已跳过'];
+    if ($hadExtra && !@unlink($extra)) {
+        if ($hadConf) { @file_put_contents($conf, $previousConf, LOCK_EX); }
+        return ['ok' => false, 'message' => '无法移除站点自定义配置：' . $extra];
+    }
+    $managedRunning = function_exists('managed_nginx_installed')
+        && managed_nginx_installed()
+        && (bool)(runtime_state('nginx')['running'] ?? false);
+    $nginxRunning = $managedRunning || (function_exists('service_running') && service_running('nginx'));
+    if (($hadConf || $hadExtra) && $nginxRunning && function_exists('runtime_nginx_reload') && !runtime_nginx_reload()) {
+        if ($hadConf) { @file_put_contents($conf, $previousConf, LOCK_EX); }
+        if ($hadExtra) { @file_put_contents($extra, $previousExtra, LOCK_EX); }
+        runtime_nginx_reload();
+        return ['ok' => false, 'message' => 'Nginx reload 失败，已恢复站点配置；站点状态未变更'];
+    }
+    return ['ok' => true, 'message' => $hadConf || $hadExtra ? '已移除 Nginx 站点配置' : '未发现 Nginx 配置，已跳过'];
 }
 
 function sync_all_site_vhosts(): void

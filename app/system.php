@@ -134,7 +134,7 @@ function cache_forget(string $key): void
 function system_metrics(bool $fresh = false): array
 {
     if (!$fresh) {
-        $cached = cache_get('metrics', 4);
+        $cached = cache_get('metrics', 2);
         if ($cached !== null) {
             return $cached;
         }
@@ -146,6 +146,7 @@ function system_metrics(bool $fresh = false): array
     $metrics['os_name'] = php_uname('s') . ' ' . php_uname('r');
     $metrics['php_version'] = PHP_VERSION;
     $metrics['time'] = date('H:i:s');
+    $metrics['sampled_at'] = function_exists('hrtime') ? hrtime(true) / 1e9 : microtime(true);
 
     cache_set('metrics', $metrics);
     return $metrics;
@@ -224,6 +225,8 @@ function metrics_unix(): array
 {
     $memTotal = 0;
     $memAvailable = 0;
+    $swapTotal = 0;
+    $swapFree = 0;
     foreach (file('/proc/meminfo', FILE_IGNORE_NEW_LINES) ?: [] as $line) {
         if (preg_match('/MemTotal:\s+(\d+)/', $line, $m)) {
             $memTotal = (int)$m[1] * 1024;
@@ -231,17 +234,23 @@ function metrics_unix(): array
         if (preg_match('/MemAvailable:\s+(\d+)/', $line, $m)) {
             $memAvailable = (int)$m[1] * 1024;
         }
+        if (preg_match('/SwapTotal:\s+(\d+)/', $line, $m)) {
+            $swapTotal = (int)$m[1] * 1024;
+        }
+        if (preg_match('/SwapFree:\s+(\d+)/', $line, $m)) {
+            $swapFree = (int)$m[1] * 1024;
+        }
     }
 
     $cpu = 0.0;
     $statFile = storage_path('cache/cpu_stat.json');
-    $prev = is_file($statFile) ? json_decode((string)file_get_contents($statFile), true) : null;
-    $statRaw = (string)@file_get_contents('/proc/stat', false, null, 0, 200);
+    $prev = is_file($statFile) ? json_decode((string)@file_get_contents($statFile), true) : null;
+    $statRaw = (string)@file_get_contents('/proc/stat', false, null, 0, 4096);
     $firstLine = explode("\n", $statRaw)[0] ?? '';
     $parts = preg_split('/\s+/', trim($firstLine));
-    if (count($parts) >= 8) {
-        $values = array_map('intval', array_slice($parts, 1, 8));
-        $idle = $values[3] + ($values[4] ?? 0);
+    if (($parts[0] ?? '') === 'cpu' && count($parts) >= 5) {
+        $values = array_map('intval', array_slice($parts, 1));
+        $idle = ($values[3] ?? 0) + ($values[4] ?? 0);
         $total = array_sum($values);
         if (is_array($prev) && isset($prev['idle'], $prev['total'])) {
             $dIdle = $idle - $prev['idle'];
@@ -250,10 +259,10 @@ function metrics_unix(): array
                 $cpu = round(max(0, min(100, (1 - $dIdle / $dTotal)) * 100), 1);
             }
         }
-        file_put_contents($statFile, json_encode(['idle' => $idle, 'total' => $total]));
+        @file_put_contents($statFile, json_encode(['idle' => $idle, 'total' => $total], JSON_UNESCAPED_SLASHES), LOCK_EX);
     }
 
-    $load = function_exists('sys_getloadavg') ? (sys_getloadavg()[0] ?? 0) : 0;
+    $loads = function_exists('sys_getloadavg') ? (sys_getloadavg() ?: [0, 0, 0]) : [0, 0, 0];
     $uptime = 0;
     if (is_file('/proc/uptime')) {
         $uptime = (int)((float)explode(' ', (string)file_get_contents('/proc/uptime'))[0]);
@@ -261,33 +270,88 @@ function metrics_unix(): array
 
     $netRx = 0;
     $netTx = 0;
+    $interfaces = [];
     foreach (file('/proc/net/dev', FILE_IGNORE_NEW_LINES) ?: [] as $line) {
         if (strpos($line, ':') === false) {
             continue;
         }
         [$iface, $rest] = explode(':', $line, 2);
-        if (trim($iface) === 'lo') {
+        $iface = trim($iface);
+        if ($iface === '' || preg_match('/^(lo|veth|br-|docker|virbr|cni|flannel)/i', $iface)) {
             continue;
         }
         $cols = preg_split('/\s+/', trim($rest));
-        $netRx += (int)($cols[0] ?? 0);
-        $netTx += (int)($cols[8] ?? 0);
+        $rx = (int)($cols[0] ?? 0);
+        $tx = (int)($cols[8] ?? 0);
+        $netRx += $rx;
+        $netTx += $tx;
+        $interfaces[] = ['name' => $iface, 'rx' => $rx, 'tx' => $tx];
     }
 
     $diskTotal = (float)@disk_total_space('/');
     $diskFree = (float)@disk_free_space('/');
+    $drives = [];
+    $skipFs = ['proc', 'sysfs', 'devtmpfs', 'devpts', 'tmpfs', 'cgroup', 'cgroup2', 'securityfs', 'debugfs', 'tracefs', 'pstore', 'configfs', 'fusectl', 'mqueue', 'hugetlbfs', 'rpc_pipefs', 'squashfs'];
+    foreach (file('/proc/mounts', FILE_IGNORE_NEW_LINES) ?: [] as $mountLine) {
+        $mount = preg_split('/\s+/', trim($mountLine));
+        if (count($mount) < 3 || in_array($mount[2], $skipFs, true)) {
+            continue;
+        }
+        $mountPoint = strtr($mount[1], ['\\040' => ' ', '\\011' => "\t", '\\134' => '\\']);
+        if (!str_starts_with($mountPoint, '/') || !is_dir($mountPoint)) {
+            continue;
+        }
+        $total = (float)@disk_total_space($mountPoint);
+        $free = (float)@disk_free_space($mountPoint);
+        if ($total <= 0 || $free < 0) {
+            continue;
+        }
+        $drives[] = ['name' => $mountPoint, 'total' => (int)$total, 'free' => (int)$free];
+    }
+    usort($drives, static fn(array $a, array $b): int => ($a['name'] === '/' ? -1 : ($b['name'] === '/' ? 1 : strcmp($a['name'], $b['name']))));
+    $drives = array_slice($drives, 0, 16);
+
+    $diskIo = [];
+    foreach (file('/proc/diskstats', FILE_IGNORE_NEW_LINES) ?: [] as $diskLine) {
+        $fields = preg_split('/\s+/', trim($diskLine));
+        if (count($fields) < 14) {
+            continue;
+        }
+        $device = (string)$fields[2];
+        if (preg_match('/^(loop|ram|sr)/', $device)) {
+            continue;
+        }
+        $diskIo[] = [
+            'device' => $device,
+            'read_bytes' => (int)$fields[5] * 512,
+            'write_bytes' => (int)$fields[9] * 512,
+        ];
+    }
+    $cpuCores = 0;
+    foreach (file('/proc/cpuinfo', FILE_IGNORE_NEW_LINES) ?: [] as $cpuLine) {
+        if (preg_match('/^processor\s*:/', $cpuLine)) {
+            $cpuCores++;
+        }
+    }
 
     return [
         'cpu' => $cpu,
-        'load1' => round((float)$load, 2),
+        'cpu_cores' => max(1, $cpuCores),
+        'load1' => round((float)($loads[0] ?? 0), 2),
+        'load5' => round((float)($loads[1] ?? 0), 2),
+        'load15' => round((float)($loads[2] ?? 0), 2),
         'mem_total' => $memTotal,
         'mem_used' => max(0, $memTotal - $memAvailable),
+        'swap_total' => $swapTotal,
+        'swap_used' => max(0, $swapTotal - $swapFree),
         'disk_total' => (int)$diskTotal,
         'disk_used' => (int)($diskTotal - $diskFree),
         'net_rx' => $netRx,
         'net_tx' => $netTx,
+        'net_interfaces' => $interfaces,
+        'disk_io' => $diskIo,
         'uptime' => $uptime,
-        'drives' => [],
+        'drives' => $drives,
     ];
 }
 
@@ -361,9 +425,9 @@ PS;
     return $services;
 }
 
-function service_running(string $keyword): bool
+function service_running(string $keyword, bool $fresh = false): bool
 {
-    foreach (services_status() as $service) {
+    foreach (services_status($fresh) as $service) {
         if (stripos($service['name'], $keyword) !== false || stripos($service['display'], $keyword) !== false) {
             if ($service['running']) {
                 return true;
@@ -403,6 +467,10 @@ function btsoft_dir(): string
 
 function find_mysql_bin(): string
 {
+    if (PHP_OS_FAMILY === 'Linux') {
+        $bin = command_exists('mysql') ?: command_exists('mariadb');
+        return $bin ? dirname($bin) : '';
+    }
     $configured = (string)config('system.mysql_bin', '');
     if ($configured !== '' && is_dir($configured)) {
         return rtrim($configured, '/\\');
@@ -427,6 +495,10 @@ function find_mysql_bin(): string
 
 function find_nginx_bin(): string
 {
+    if (PHP_OS_FAMILY === 'Linux') {
+        $bin = command_exists('nginx');
+        if ($bin !== null) { return $bin; }
+    }
     $managed = storage_path('soft/nginx/nginx.exe');
     if (is_file($managed)) {
         return str_replace('\\', '/', $managed);
@@ -462,6 +534,30 @@ function nginx_vhost_dir(): string
     $configured = (string)config('system.nginx_conf', '');
     if ($configured !== '') {
         return rtrim($configured, '/\\');
+    }
+    if (PHP_OS_FAMILY === 'Linux') {
+        $bin = find_nginx_bin();
+        if ($bin === '') { return ''; }
+        $mainConf = trim((string)config('system.nginx_main_conf', ''));
+        $dumpCommand = escapeshellarg($bin) . ' -T' . ($mainConf !== '' ? ' -c ' . escapeshellarg($mainConf) : '') . ' 2>&1';
+        $dump = run_cmd($dumpCommand, 20);
+        if ($dump['code'] !== 0) { return ''; }
+        $depth = 0;
+        $baseDir = $mainConf !== '' ? dirname($mainConf) : '/etc/nginx';
+        foreach (preg_split('/\r?\n/', (string)$dump['output']) as $line) {
+            $plain = trim(preg_replace('/\s+#.*$/', '', (string)$line));
+            if ($depth === 1 && preg_match('/^include\s+([^;]+);$/', $plain, $m)) {
+                $include = trim(trim((string)$m[1]), "'\" ");
+                if (strpos($include, '*') !== false) {
+                    if (!str_starts_with($include, '/')) { $include = rtrim($baseDir, '/') . '/' . $include; }
+                    $dir = dirname($include);
+                    if (is_dir($dir)) { return $dir; }
+                }
+            }
+            $depth += substr_count($plain, '{') - substr_count($plain, '}');
+            $depth = max(0, $depth);
+        }
+        return '';
     }
     $candidate = btsoft_dir() . '/nginx/conf/vhost';
     if (is_dir($candidate)) {
@@ -520,8 +616,9 @@ function soft_catalog(): array
                 if ($bin === '') {
                     return ['installed' => false, 'version' => '', 'path' => ''];
                 }
-                $res = run_cmd(escapeshellarg($bin . '/mysql.exe') . ' --version 2>&1', 10);
-                return ['installed' => true, 'version' => version_of('mysql') ?: trim($res['output']), 'path' => $bin];
+                $mysql = PHP_OS_FAMILY === 'Windows' ? $bin . '/mysql.exe' : (command_exists('mysql') ?: command_exists('mariadb'));
+                $res = $mysql ? run_cmd(escapeshellarg($mysql) . ' --version 2>&1', 10) : ['output' => ''];
+                return ['installed' => $mysql !== null, 'version' => version_of('mysql') ?: trim((string)$res['output']), 'path' => $mysql ?: $bin];
             },
         ],
         [
@@ -529,6 +626,12 @@ function soft_catalog(): array
             'desc' => '站点脚本运行环境，支持多版本共存。',
             'winget' => 'PHP.PHP.8.3', 'url' => 'https://www.php.net/downloads',
             'probe' => function () {
+                if (PHP_OS_FAMILY === 'Linux') {
+                    $bin = command_exists('php-fpm8.4') ?: command_exists('php-fpm8.3') ?: command_exists('php-fpm8.2') ?: command_exists('php-fpm');
+                    return $bin
+                        ? ['installed' => true, 'version' => version_of('php-fpm') ?: PHP_VERSION, 'path' => $bin]
+                        : ['installed' => false, 'version' => '', 'path' => ''];
+                }
                 $versions = php_versions();
                 $bt = array_values(array_filter($versions, fn($v) => stripos($v['version'], '当前') === false));
                 if ($bt) {
@@ -635,6 +738,138 @@ function soft_check(string $key): ?array
 
 /* --------------------------------- 防火墙 --------------------------------- */
 
+function firewall_linux_backend(): array
+{
+    $ufw = command_exists('ufw');
+    $ufwState = $ufw ? run_cmd('ufw status 2>&1', 10) : ['code' => 127, 'output' => ''];
+    $ufwActive = preg_match('/^Status:\s*active\b/im', (string)$ufwState['output']) === 1;
+    $firewalld = command_exists('firewall-cmd');
+    $firewalldState = $firewalld ? run_cmd('firewall-cmd --state 2>&1', 10) : ['code' => 127, 'output' => ''];
+    $firewalldActive = $firewalldState['code'] === 0 && trim((string)$firewalldState['output']) === 'running';
+    if ($ufwActive || (!$firewalldActive && $ufw !== null)) {
+        return ['name' => 'ufw', 'installed' => true, 'enabled' => $ufwActive];
+    }
+    if ($firewalldActive || $firewalld !== null) {
+        return ['name' => 'firewalld', 'installed' => true, 'enabled' => $firewalldActive];
+    }
+    if ($ufw !== null) {
+        return ['name' => 'ufw', 'installed' => true, 'enabled' => false];
+    }
+    return ['name' => '', 'installed' => false, 'enabled' => false];
+}
+
+function firewall_validate_rule(array $rule): array
+{
+    $rule['name'] = trim((string)($rule['name'] ?? ''));
+    $rule['direction'] = (string)($rule['direction'] ?? 'inbound');
+    $rule['action'] = (string)($rule['action'] ?? 'allow');
+    $rule['protocol'] = strtolower((string)($rule['protocol'] ?? 'tcp'));
+    $rule['remote_ip'] = trim((string)($rule['remote_ip'] ?? 'any')) ?: 'any';
+    $rule['port'] = trim((string)($rule['port'] ?? ''));
+    if ($rule['name'] === '' || mb_strlen($rule['name']) > 120) {
+        return ['ok' => false, 'message' => '规则名称不能为空且不能超过 120 个字符'];
+    }
+    if (!in_array($rule['direction'], ['inbound', 'outbound'], true)
+        || !in_array($rule['action'], ['allow', 'block'], true)
+        || !in_array($rule['protocol'], ['tcp', 'udp'], true)) {
+        return ['ok' => false, 'message' => '规则方向、动作或协议不合法'];
+    }
+    if ($rule['port'] === '') {
+        return ['ok' => false, 'message' => '为避免误开放/阻断全部端口，必须明确填写端口'];
+    }
+    $ports = [];
+    foreach (preg_split('/[,\s]+/', $rule['port']) as $part) {
+        if (!preg_match('/^(\d{1,5})(?:-(\d{1,5}))?$/', $part, $m)) {
+            return ['ok' => false, 'message' => '端口格式不合法，示例：80,443 或 8000-9000'];
+        }
+        $from = (int)$m[1];
+        $to = isset($m[2]) ? (int)$m[2] : $from;
+        if ($from < 1 || $to > 65535 || $from > $to || $to - $from > 20000) {
+            return ['ok' => false, 'message' => '端口范围须在 1-65535，且单段范围不能超过 20000 个端口'];
+        }
+        $ports[] = $from === $to ? (string)$from : $from . ':' . $to;
+    }
+    $ports = array_values(array_unique($ports));
+    if (count($ports) > 32) {
+        return ['ok' => false, 'message' => '单条规则最多包含 32 个端口/范围'];
+    }
+    $remote = $rule['remote_ip'];
+    if (strtolower($remote) !== 'any' && !firewall_valid_ip_or_cidr($remote)) {
+        return ['ok' => false, 'message' => 'IP 地址或 CIDR 格式不合法'];
+    }
+    $rule['remote_ip'] = strtolower($remote) === 'any' ? 'any' : $remote;
+    $rule['port'] = implode(',', $ports);
+    return ['ok' => true, 'rule' => $rule, 'ports' => $ports];
+}
+
+function firewall_valid_ip_or_cidr(string $value): bool
+{
+    $parts = explode('/', $value, 2);
+    if (count($parts) === 1) {
+        return filter_var($value, FILTER_VALIDATE_IP) !== false;
+    }
+    if (filter_var($parts[0], FILTER_VALIDATE_IP) === false || !ctype_digit($parts[1])) {
+        return false;
+    }
+    $max = filter_var($parts[0], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false ? 32 : 128;
+    return (int)$parts[1] >= 0 && (int)$parts[1] <= $max;
+}
+
+function firewall_rule_tag(array $rule): string
+{
+    return 'Tarsk-' . substr(hash('sha256', implode('|', [
+        (string)$rule['name'], (string)$rule['direction'], (string)$rule['action'],
+        (string)$rule['protocol'], (string)$rule['port'], (string)$rule['remote_ip'],
+    ])), 0, 16);
+}
+
+function firewall_ufw_command(array $rule, string $port, bool $delete = false): string
+{
+    $verb = $rule['action'] === 'block' ? 'deny' : 'allow';
+    $parts = ['ufw'];
+    if ($delete) {
+        $parts[] = '--force';
+        $parts[] = 'delete';
+    }
+    $parts[] = $verb;
+    $parts[] = $rule['direction'] === 'outbound' ? 'out' : 'in';
+    $parts[] = 'proto';
+    $parts[] = $rule['protocol'];
+    if ($rule['direction'] === 'outbound') {
+        $parts[] = 'from';
+        $parts[] = 'any';
+        $parts[] = 'to';
+        $parts[] = $rule['remote_ip'];
+    } else {
+        $parts[] = 'from';
+        $parts[] = $rule['remote_ip'];
+        $parts[] = 'to';
+        $parts[] = 'any';
+    }
+    $parts[] = 'port';
+    $parts[] = $port;
+    $parts[] = 'comment';
+    $parts[] = firewall_rule_tag($rule);
+    return implode(' ', array_map('escapeshellarg', $parts)) . ' 2>&1';
+}
+
+function firewall_firewalld_rich_rule(array $rule, string $port): ?string
+{
+    if ($rule['direction'] === 'outbound') {
+        return null;
+    }
+    $family = '';
+    $source = '';
+    if ($rule['remote_ip'] !== 'any') {
+        $ip = explode('/', $rule['remote_ip'], 2)[0];
+        $family = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? ' family="ipv6"' : ' family="ipv4"';
+        $source = ' source address="' . $rule['remote_ip'] . '"';
+    }
+    $portValue = str_replace(':', '-', $port);
+    $action = $rule['action'] === 'block' ? 'drop' : 'accept';
+    return 'rule' . $family . $source . ' port port="' . $portValue . '" protocol="' . $rule['protocol'] . '" ' . $action;
+}
+
 function firewall_status(bool $fresh = false): array
 {
     if (!$fresh) {
@@ -644,8 +879,7 @@ function firewall_status(bool $fresh = false): array
         }
     }
 
-    $result = ['profiles' => [], 'supported' => false, 'error' => ''];
-
+    $result = ['profiles' => [], 'supported' => false, 'error' => '', 'backend' => ''];
     if (PHP_OS_FAMILY === 'Windows') {
         $script = <<<'PS'
 $ErrorActionPreference = 'SilentlyContinue'
@@ -654,23 +888,24 @@ $profiles | ConvertTo-Json -Compress -Depth 3
 PS;
         $data = decode_json_loose(ps_run($script, 20)['output']);
         if (is_array($data)) {
-            if (isset($data['Name'])) {
-                $data = [$data];
-            }
+            if (isset($data['Name'])) { $data = [$data]; }
             foreach ($data as $row) {
-                $result['profiles'][] = [
-                    'name' => (string)($row['Name'] ?? ''),
-                    'enabled' => (bool)($row['Enabled'] ?? false),
-                ];
+                $result['profiles'][] = ['name' => (string)($row['Name'] ?? ''), 'enabled' => (bool)($row['Enabled'] ?? false)];
             }
             $result['supported'] = count($result['profiles']) > 0;
+            $result['backend'] = 'Windows Defender Firewall';
         }
     } else {
-        $res = run_cmd('ufw status 2>/dev/null', 10);
-        if ($res['ok'] && trim($res['output']) !== '') {
-            $enabled = stripos($res['output'], 'active') !== false;
-            $result['profiles'][] = ['name' => 'ufw', 'enabled' => $enabled];
+        $backend = firewall_linux_backend();
+        if ($backend['installed']) {
+            $result['profiles'][] = ['name' => $backend['name'], 'enabled' => $backend['enabled']];
             $result['supported'] = true;
+            $result['backend'] = $backend['name'];
+            if (!$backend['enabled']) {
+                $result['error'] = '防火墙服务当前未启用；Tarsk 不会自动启用，避免远程管理连接被意外阻断。';
+            }
+        } else {
+            $result['error'] = '未找到受支持的 UFW 或 firewalld；请先由系统管理员安装并配置其中一种。';
         }
     }
 
@@ -678,18 +913,36 @@ PS;
     return $result;
 }
 
-function firewall_remove(string $name): array
+function firewall_remove(array $rule): array
 {
     if (PHP_OS_FAMILY === 'Windows') {
+        $name = (string)($rule['name'] ?? '');
         $command = 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-NetFirewallRule -DisplayName '
-            . escapeshellarg('Tarsk - ' . $name) . ' -ErrorAction SilentlyContinue"';
+            . escapeshellarg('Tarsk - ' . $name) . ' -ErrorAction Stop"';
         $res = run_cmd($command, 25);
-        return [
-            'ok' => $res['code'] === 0,
-            'message' => $res['code'] === 0 ? '系统防火墙规则已移除' : ('移除失败：' . ($res['error'] ?: '请以管理员身份运行')),
-        ];
+        return ['ok' => $res['code'] === 0, 'message' => $res['code'] === 0 ? '系统防火墙规则已移除' : ($res['error'] ?: $res['output'] ?: '移除失败，请以管理员身份运行')];
     }
-    return ['ok' => true, 'message' => '请在服务器上同步清理 ufw 规则'];
+
+    $validated = firewall_validate_rule($rule);
+    if (empty($validated['ok'])) { return ['ok' => false, 'message' => $validated['message']]; }
+    $rule = $validated['rule'];
+    $backend = firewall_linux_backend();
+    if (!$backend['installed']) { return ['ok' => false, 'message' => '未检测到可管理的 UFW/firewalld']; }
+    $errors = [];
+    foreach ($validated['ports'] as $port) {
+        if ($backend['name'] === 'ufw') {
+            $res = run_cmd(firewall_ufw_command($rule, $port, true), 20);
+        } else {
+            $rich = firewall_firewalld_rich_rule($rule, $port);
+            if ($rich === null) { return ['ok' => false, 'message' => 'firewalld rich-rule 暂不支持出站规则；请改用 UFW 管理出站规则']; }
+            $res = run_cmd('firewall-cmd --permanent --remove-rich-rule=' . escapeshellarg($rich) . ' 2>&1', 20);
+            if ($res['code'] === 0) { $res = run_cmd('firewall-cmd --reload 2>&1', 20); }
+        }
+        if ($res['code'] !== 0) { $errors[] = trim($res['error'] ?: $res['output']); }
+    }
+    return $errors
+        ? ['ok' => false, 'message' => $backend['name'] . ' 删除失败：' . mb_substr(implode('; ', $errors), 0, 180)]
+        : ['ok' => true, 'message' => '规则已从 ' . $backend['name'] . ' 移除'];
 }
 
 function firewall_apply(array $rule): array
@@ -699,29 +952,61 @@ function firewall_apply(array $rule): array
         $remote = trim((string)($rule['remote_ip'] ?? ''));
         $command = sprintf(
             'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "New-NetFirewallRule -DisplayName %s -Direction %s -Action %s -Protocol %s %s %s -Enabled True"',
-            escapeshellarg($display),
-            $rule['direction'] === 'outbound' ? 'Outbound' : 'Inbound',
-            $rule['action'] === 'block' ? 'Block' : 'Allow',
-            strtoupper($rule['protocol']),
+            escapeshellarg($display), $rule['direction'] === 'outbound' ? 'Outbound' : 'Inbound',
+            $rule['action'] === 'block' ? 'Block' : 'Allow', strtoupper($rule['protocol']),
             $rule['port'] !== '' ? ('-LocalPort ' . escapeshellarg($rule['port'])) : '',
             ($remote !== '' && $remote !== 'any') ? ('-RemoteAddress ' . escapeshellarg($remote)) : '',
         );
         $res = run_cmd($command, 30);
-        return [
-            'ok' => $res['code'] === 0,
-            'message' => $res['code'] === 0 ? '规则已写入 Windows 防火墙' : ($res['error'] ?: '写入失败，请以管理员身份运行面板'),
-        ];
+        return ['ok' => $res['code'] === 0, 'message' => $res['code'] === 0 ? '规则已写入 Windows 防火墙' : ($res['error'] ?: $res['output'] ?: '写入失败，请以管理员身份运行面板')];
     }
 
-    if ($rule['action'] === 'allow') {
-        $res = run_cmd('ufw allow ' . escapeshellarg($rule['port'] . '/' . $rule['protocol']) . ' 2>&1', 20);
-    } else {
-        $res = run_cmd('ufw deny ' . escapeshellarg($rule['port'] . '/' . $rule['protocol']) . ' 2>&1', 20);
+    $validated = firewall_validate_rule($rule);
+    if (empty($validated['ok'])) { return ['ok' => false, 'message' => $validated['message']]; }
+    $rule = $validated['rule'];
+    $backend = firewall_linux_backend();
+    if (!$backend['installed']) { return ['ok' => false, 'message' => '未检测到可管理的 UFW/firewalld']; }
+    if (!$backend['enabled']) {
+        return ['ok' => false, 'message' => $backend['name'] . ' 当前未启用。为避免锁死远程 SSH，Tarsk 不会自动启用防火墙；请先确认 SSH 放行规则并由管理员启用。'];
     }
-    return [
-        'ok' => $res['code'] === 0,
-        'message' => $res['code'] === 0 ? '规则已写入 ufw' : ($res['error'] ?: '写入失败'),
-    ];
+    if ($backend['name'] === 'firewalld' && $rule['direction'] === 'outbound') {
+        return ['ok' => false, 'message' => '当前 firewalld rich-rule 适配仅支持入站规则；出站规则请使用 UFW。'];
+    }
+
+    $applied = [];
+    foreach ($validated['ports'] as $port) {
+        if ($backend['name'] === 'ufw') {
+            $res = run_cmd(firewall_ufw_command($rule, $port), 20);
+        } else {
+            $rich = firewall_firewalld_rich_rule($rule, $port);
+            $res = $rich === null
+                ? ['code' => 1, 'output' => '', 'error' => '不支持的出站规则']
+                : run_cmd('firewall-cmd --permanent --add-rich-rule=' . escapeshellarg($rich) . ' 2>&1', 20);
+            if ($res['code'] === 0) {
+                $res = run_cmd('firewall-cmd --reload 2>&1', 20);
+                if ($res['code'] !== 0) {
+                    run_cmd('firewall-cmd --permanent --remove-rich-rule=' . escapeshellarg($rich) . ' 2>&1', 20);
+                    run_cmd('firewall-cmd --reload 2>&1', 20);
+                }
+            }
+        }
+        if ($res['code'] !== 0) {
+            foreach (array_reverse($applied) as $donePort) {
+                if ($backend['name'] === 'ufw') {
+                    run_cmd(firewall_ufw_command($rule, $donePort, true), 20);
+                } else {
+                    $doneRich = firewall_firewalld_rich_rule($rule, $donePort);
+                    if ($doneRich !== null) {
+                        run_cmd('firewall-cmd --permanent --remove-rich-rule=' . escapeshellarg($doneRich) . ' 2>&1', 20);
+                        run_cmd('firewall-cmd --reload 2>&1', 20);
+                    }
+                }
+            }
+            return ['ok' => false, 'message' => $backend['name'] . ' 写入失败：' . mb_substr(trim($res['error'] ?: $res['output'] ?: '需要 root/管理员权限'), 0, 180) . '；已尝试回滚本次部分规则'];
+        }
+        $applied[] = $port;
+    }
+    return ['ok' => true, 'message' => '规则已写入并应用到 ' . $backend['name']];
 }
 
 /* --------------------------------- Docker --------------------------------- */

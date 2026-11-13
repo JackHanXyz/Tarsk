@@ -67,6 +67,40 @@ foreach ($ext in @('pdo_mysql', 'openssl', 'mbstring')) {
 }
 Write-Host "[2/5] PHP 版本 $version，扩展检查通过"
 
+# 端口占用检测：8888 常被其他面板占用，自动改用空闲端口，避免安装完成后打开错误的页面
+function Test-PortListening([int]$Port) {
+    try {
+        return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    } catch {
+        return [bool](netstat -ano | Select-String ":$Port\s" | Select-String 'LISTENING')
+    }
+}
+
+function Test-TarskOnPort([int]$Port) {
+    try {
+        $resp = Invoke-WebRequest "http://127.0.0.1:$Port/login" -UseBasicParsing -TimeoutSec 3
+        return ($resp.Content -match 'Tarsk')
+    } catch {
+        return $false
+    }
+}
+
+$reusePanel = $false
+if (Test-PortListening $PanelPort) {
+    if (Test-TarskOnPort $PanelPort) {
+        $reusePanel = $true
+        Write-Host "[提示] 检测到 Tarsk 已在端口 $PanelPort 运行，继续使用该端口。" -ForegroundColor Yellow
+    } else {
+        $freePort = 8890..8920 | Where-Object { -not (Test-PortListening $_) } | Select-Object -First 1
+        if (-not $freePort) {
+            Write-Host "[错误] 端口 $PanelPort 已被其他程序占用，且 8890-8920 无空闲端口，请用 -PanelPort 指定。" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "[提示] 端口 $PanelPort 已被其他程序占用，自动改用 $freePort。" -ForegroundColor Yellow
+        $PanelPort = [int]$freePort
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($AdminPass)) {
     $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
     $AdminPass = -join (1..12 | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
@@ -98,7 +132,7 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not $NoTask) {
     Write-Host '[4/5] 注册登录自启任务 Tarsk_Panel…'
-    $taskCommand = 'cmd /c cd /d "' + $Root + '" && "' + $php + '" -S 0.0.0.0:' + $PanelPort + ' -t public public/router.php'
+    $taskCommand = 'cmd /c cd /d "' + $Root + '" && "' + $php + '" -S 127.0.0.1:' + $PanelPort + ' -t public public/router.php'
     schtasks /Create /TN "Tarsk_Panel" /TR $taskCommand /SC ONLOGON /RL LIMITED /F | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-Host '      已注册。可在任务计划程序中删除 Tarsk_Panel 取消自启。'
@@ -113,16 +147,18 @@ Write-Host '[5/5] 启动面板…'
 $logDir = Join-Path $Root 'storage\logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
-$listening = Get-NetTCPConnection -LocalPort $PanelPort -State Listen -ErrorAction SilentlyContinue
-if ($listening) {
-    Write-Host "      端口 $PanelPort 已在监听，可能面板已在运行。" -ForegroundColor Yellow
+if ($reusePanel) {
+    Write-Host "      Tarsk 已在端口 $PanelPort 运行，跳过启动。"
 } else {
-    Start-Process -FilePath $php `
-        -ArgumentList @('-S', "0.0.0.0:$PanelPort", '-t', 'public', 'public/router.php') `
-        -WorkingDirectory $Root -WindowStyle Hidden `
-        -RedirectStandardOutput (Join-Path $logDir 'panel.log') `
-        -RedirectStandardError (Join-Path $logDir 'panel.err.log')
-    Start-Sleep -Milliseconds 900
+    # 不用 Start-Process 的输出重定向：目标日志被占用时会永久阻塞，改用 cmd 追加写入
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $panelLog = Join-Path $logDir "panel-$stamp.log"
+    $cmdLine = '"' + $php + '" -S 127.0.0.1:' + $PanelPort + ' -t public public/router.php >> "' + $panelLog + '" 2>&1'
+    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -WorkingDirectory $Root -WindowStyle Hidden
+    Start-Sleep -Milliseconds 1500
+    if (-not (Test-TarskOnPort $PanelPort)) {
+        Write-Host "      [警告] 面板未响应，请查看日志：$panelLog" -ForegroundColor Yellow
+    }
 }
 
 Write-Host ''

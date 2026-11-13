@@ -13,6 +13,7 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
     <button class="btn btn--ghost btn--sm" data-open="mkdirDialog"><?= icon('folder', 14) ?>新建目录</button>
     <button class="btn btn--ghost btn--sm" data-open="fileCreateDialog"><?= icon('plus', 14) ?>新建文件</button>
     <button class="btn btn--ghost btn--sm" data-trigger="fileUploadInput"><?= icon('upload', 14) ?>上传文件</button>
+    <button class="btn btn--ghost btn--sm" data-open="chunkUploadDialog"><?= icon('upload', 14) ?>大文件上传</button>
     <button class="btn btn--ghost btn--sm" type="button" data-batch-action="<?= url('/files/compress') ?>"><?= icon('box', 14) ?>压缩</button>
     <button class="btn btn--ghost btn--sm" type="button" data-open="extractDialog"><?= icon('download', 14) ?>解压</button>
     <button class="btn btn--ghost btn--sm" type="button" data-open="fetchDialog"><?= icon('external', 14) ?>远程下载</button>
@@ -126,7 +127,7 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
     </div>
     <div class="modal__body" style="padding:0">
       <textarea id="editorContent" name="content" spellcheck="false"
-        style="width:100%;min-height:52vh;border:0;outline:none;padding:16px 20px;font-family:var(--mono);font-size:12.5px;line-height:1.75;resize:vertical;background:#fcfdff"></textarea>
+        style="width:100%;min-height:52vh;border:0;outline:none;padding:16px 20px;font-family:var(--mono);font-size:12.5px;line-height:1.75;resize:vertical;background:var(--surface-2);color:var(--text)"></textarea>
     </div>
     <div class="modal__foot">
       <span class="small muted" id="editorHint">支持 UTF-8 文本文件，最大 4 MB</span>
@@ -336,6 +337,183 @@ $extColors = ['php' => 'code', 'html' => 'code', 'js' => 'code', 'css' => 'code'
       document.getElementById('chmodMode').value = mode === '—' ? '' : mode;
       document.getElementById('chmodTarget').textContent = path;
     });
+  });
+})();
+</script>
+
+<dialog class="modal" id="chunkUploadDialog">
+  <div class="modal__head">
+    <h3>大文件分片上传</h3>
+    <button class="icon-btn" type="button" data-close="chunkUploadDialog"><?= icon('x', 14) ?></button>
+  </div>
+  <div class="modal__body">
+    <div class="field">
+      <label>选择文件</label>
+      <input class="input" type="file" id="chunkFileInput">
+      <span class="hint">按 2 MB 切片上传，中途关闭页面后重新选择同一文件可断点续传。目标目录：<span class="mono"><?= e($rel === '' ? '根目录' : $rel) ?></span></span>
+    </div>
+    <div class="mt-12">
+      <div class="toolbar" style="justify-content:space-between;margin-bottom:4px">
+        <span class="small" id="chunkStatus">等待选择文件</span>
+        <span class="small muted mono" id="chunkPercent">0%</span>
+      </div>
+      <div class="bar"><div class="bar__fill" id="chunkBar" style="width:0%"></div></div>
+    </div>
+    <p class="hint mt-12" id="chunkDetail"></p>
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" type="button" data-close="chunkUploadDialog">关闭</button>
+    <button class="btn btn--ghost" type="button" id="chunkAbort" disabled>取消上传</button>
+    <button class="btn btn--primary" type="button" id="chunkStart" disabled>开始上传</button>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  var input = document.getElementById('chunkFileInput');
+  var startBtn = document.getElementById('chunkStart');
+  var abortBtn = document.getElementById('chunkAbort');
+  var bar = document.getElementById('chunkBar');
+  var percentEl = document.getElementById('chunkPercent');
+  var statusEl = document.getElementById('chunkStatus');
+  if (!input || !startBtn) { return; }
+
+  var TARGET = <?= json_encode($rel, JSON_UNESCAPED_UNICODE) ?>;
+  var TOKEN = <?= json_encode(csrf_token()) ?>;
+  var CHUNK_SIZE = 2 * 1024 * 1024;
+  var running = false;
+  var aborted = false;
+  var uploadId = '';
+
+  function hashId(file) {
+    var seed = file.name + '|' + file.size + '|' + (file.lastModified || 0) + '|' + TARGET;
+    var h1 = 0x811c9dc5, h2 = 0x01000193, h3 = 0x9e3779b9, h4 = 0x85ebca6b;
+    for (var i = 0; i < seed.length; i++) {
+      var c = seed.charCodeAt(i);
+      h1 = (h1 ^ c) * 16777619 >>> 0;
+      h2 = (h2 + c * 31) >>> 0;
+      h3 = (h3 ^ (c << 3)) * 2654435761 >>> 0;
+      h4 = (h4 + (c ^ 0x5bf03635)) >>> 0;
+    }
+    var hex = function (n) { return ('00000000' + n.toString(16)).slice(-8); };
+    return hex(h1) + hex(h2) + hex(h3) + hex(h4);
+  }
+
+  function post(url, data) {
+    return fetch(url, { method: 'POST', body: data, credentials: 'same-origin' })
+      .then(function (res) {
+        return res.json().catch(function () {
+          return { ok: false, message: '服务端返回异常（HTTP ' + res.status + '），可能页面已过期' };
+        });
+      });
+  }
+
+  function setProgress(done, total, text) {
+    var pct = total > 0 ? Math.min(100, done / total * 100) : 0;
+    bar.style.width = pct.toFixed(1) + '%';
+    percentEl.textContent = pct.toFixed(1) + '%';
+    if (text) { statusEl.textContent = text; }
+  }
+
+  input.addEventListener('change', function () {
+    var file = input.files && input.files[0];
+    startBtn.disabled = !file;
+    if (!file) { return; }
+    statusEl.textContent = '已选择：' + file.name;
+    document.getElementById('chunkDetail').textContent =
+      '大小 ' + (file.size / 1024 / 1024).toFixed(2) + ' MB · 预计 ' + Math.ceil(file.size / CHUNK_SIZE) + ' 个分片';
+    setProgress(0, file.size);
+  });
+
+  startBtn.addEventListener('click', function () {
+    var file = input.files && input.files[0];
+    if (!file || running) { return; }
+    running = true;
+    aborted = false;
+    startBtn.disabled = true;
+    abortBtn.disabled = false;
+    uploadId = hashId(file);
+
+    var init = new FormData();
+    init.append('_token', TOKEN);
+    init.append('upload_id', uploadId);
+    init.append('path', TARGET);
+    init.append('name', file.name);
+    init.append('size', file.size);
+    init.append('chunk_size', CHUNK_SIZE);
+
+    statusEl.textContent = '正在初始化…';
+    post(<?= json_encode(url('/files/upload/init')) ?>, init).then(function (res) {
+      if (!res.ok) { throw new Error(res.message || '初始化失败'); }
+      var uploaded = res.uploaded || [];
+      var total = res.total_chunks || Math.ceil(file.size / CHUNK_SIZE);
+      if (uploaded.length) {
+        document.getElementById('chunkDetail').textContent = '检测到已上传 ' + uploaded.length + ' 个分片，将从断点继续';
+      }
+      var doneBytes = 0;
+      uploaded.forEach(function (index) {
+        doneBytes += Math.min(CHUNK_SIZE, file.size - index * CHUNK_SIZE);
+      });
+      setProgress(doneBytes, file.size, '开始上传…');
+
+      var queue = [];
+      for (var i = 0; i < total; i++) {
+        if (uploaded.indexOf(i) === -1) { queue.push(i); }
+      }
+
+      var uploadNext = function (pos) {
+        if (aborted) { return Promise.resolve(); }
+        if (pos >= queue.length) { return Promise.resolve(); }
+        var index = queue[pos];
+        var start = index * CHUNK_SIZE;
+        var blob = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
+        var form = new FormData();
+        form.append('_token', TOKEN);
+        form.append('upload_id', uploadId);
+        form.append('index', index);
+        form.append('chunk', blob, 'chunk.part');
+        return post(<?= json_encode(url('/files/upload/chunk')) ?>, form).then(function (r) {
+          if (!r.ok) { throw new Error(r.message || ('分片 ' + index + ' 上传失败')); }
+          doneBytes += blob.size;
+          setProgress(doneBytes, file.size, '已上传 ' + (pos + 1) + ' / ' + queue.length + ' 个分片');
+          return uploadNext(pos + 1);
+        });
+      };
+
+      return uploadNext(0).then(function () {
+        if (aborted) { return; }
+        statusEl.textContent = '正在合并分片…';
+        var finish = new FormData();
+        finish.append('_token', TOKEN);
+        finish.append('upload_id', uploadId);
+        finish.append('path', TARGET);
+        return post(<?= json_encode(url('/files/upload/finish')) ?>, finish).then(function (r) {
+          if (!r.ok) { throw new Error(r.message || '合并失败'); }
+          setProgress(file.size, file.size, '上传完成：' + r.file);
+          document.getElementById('chunkDetail').textContent = '已完成，正在刷新列表…';
+          setTimeout(function () { window.location.reload(); }, 700);
+        });
+      });
+    }).catch(function (err) {
+      statusEl.textContent = '失败：' + err.message;
+      startBtn.disabled = false;
+    }).then(function () {
+      running = false;
+      abortBtn.disabled = true;
+      if (!aborted) { startBtn.disabled = false; }
+    });
+  });
+
+  abortBtn.addEventListener('click', function () {
+    aborted = true;
+    running = false;
+    abortBtn.disabled = true;
+    startBtn.disabled = false;
+    statusEl.textContent = '已取消（已上传的分片会保留 12 小时，重新选择同一文件可续传）';
+    var form = new FormData();
+    form.append('_token', TOKEN);
+    form.append('upload_id', uploadId);
+    post(<?= json_encode(url('/files/upload/abort')) ?>, form);
   });
 })();
 </script>

@@ -47,10 +47,17 @@ function firewall_create(): void
         'remote_ip' => $remote !== '' ? $remote : 'any',
     ];
 
+    $validated = firewall_validate_rule($rule);
+    if (empty($validated['ok'])) {
+        flash('error', $validated['message']);
+        redirect('/firewall');
+    }
+    $rule = $validated['rule'];
+
     $result = firewall_apply($rule);
     execute(
         'INSERT INTO ' . t('firewall') . ' (name, direction, action, protocol, port, remote_ip, status, error, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        [$name, $direction, $action, $protocol, $port, $rule['remote_ip'], 'enabled', $result['ok'] ? '' : mb_substr($result['message'], 0, 255), now()]
+        [$name, $direction, $action, $protocol, $port, $rule['remote_ip'], $result['ok'] ? 'enabled' : 'disabled', $result['ok'] ? '' : mb_substr($result['message'], 0, 255), now()]
     );
     cache_forget('firewall');
 
@@ -66,10 +73,15 @@ function firewall_delete(int $id): void
         flash('error', '规则不存在');
         redirect('/firewall');
     }
-    $result = firewall_remove((string)$rule['name']);
-    execute('DELETE FROM ' . t('firewall') . ' WHERE id = ?', [$id]);
-    cache_forget('firewall');
-    log_action('删除防火墙规则', (string)$rule['name'], 'danger');
-    flash($result['ok'] ? 'success' : 'warning', $result['message']);
+    $result = firewall_remove($rule);
+    if ($result['ok']) {
+        execute('DELETE FROM ' . t('firewall') . ' WHERE id = ?', [$id]);
+        cache_forget('firewall');
+        log_action('删除防火墙规则', (string)$rule['name'], 'danger');
+    } else {
+        execute('UPDATE ' . t('firewall') . ' SET status = ?, error = ? WHERE id = ?', ['disabled', mb_substr($result['message'], 0, 255), $id]);
+        log_action('删除防火墙规则失败', (string)$rule['name'] . ' · ' . $result['message'], 'warning');
+    }
+    flash($result['ok'] ? 'success' : 'error', $result['message']);
     redirect('/firewall');
 }

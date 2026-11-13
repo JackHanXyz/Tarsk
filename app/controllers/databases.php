@@ -92,3 +92,152 @@ function databases_tables(): void
     $tables = mysql_tables($db);
     json_response(['ok' => true, 'db' => $db, 'tables' => $tables]);
 }
+
+/* --------------------------- 用户与权限 --------------------------- */
+
+function databases_users_page(): void
+{
+    $userList = mysql_user_list();
+    $databases = array_map(static fn($db) => $db['name'], mysql_databases());
+
+    render('databases_users', [
+        'title' => '数据库用户',
+        'active' => 'databases',
+        'users' => $userList['users'],
+        'list_error' => $userList['error'],
+        'can_manage' => mysql_can_manage_globally(),
+        'grants' => mysql_admin_grants(),
+        'databases' => $databases,
+        'version' => mysql_version_number(),
+        'connected' => mysql_connection() !== null,
+    ], 'app');
+}
+
+function databases_users_create(): void
+{
+    $user = trim((string)($_POST['user'] ?? ''));
+    $password = (string)($_POST['password'] ?? '');
+    $remote = !empty($_POST['remote']);
+    $host = $remote ? '%' : 'localhost';
+    $privileges = (string)($_POST['privileges'] ?? 'ALL PRIVILEGES');
+    $dbs = $_POST['databases'] ?? [];
+    $dbs = is_array($dbs) ? array_values(array_filter(array_map('strval', $dbs))) : [];
+
+    $result = mysql_user_create($user, $password, $host, $dbs, $privileges);
+    flash($result['ok'] ? 'success' : 'error', $result['message']);
+    redirect('/databases/users');
+}
+
+function databases_users_drop(): void
+{
+    $user = (string)($_POST['user'] ?? '');
+    $host = (string)($_POST['host'] ?? 'localhost');
+    $result = mysql_user_drop($user, $host);
+    flash($result['ok'] ? 'success' : 'error', $result['message']);
+    redirect('/databases/users');
+}
+
+function databases_users_password(): void
+{
+    $user = (string)($_POST['user'] ?? '');
+    $host = (string)($_POST['host'] ?? 'localhost');
+    $password = (string)($_POST['password'] ?? '');
+    $result = mysql_user_password($user, $host, $password);
+    flash($result['ok'] ? 'success' : 'error', $result['message']);
+    redirect('/databases/users');
+}
+
+function databases_users_remote(): void
+{
+    $user = (string)($_POST['user'] ?? '');
+    $host = (string)($_POST['host'] ?? 'localhost');
+    $remote = !empty($_POST['remote']);
+    $result = mysql_user_remote($user, $host, $remote);
+    flash($result['ok'] ? 'success' : 'error', $result['message']);
+    redirect('/databases/users');
+}
+
+/* ----------------------------- SQL 导入 ----------------------------- */
+
+function databases_import(): void
+{
+    $db = (string)($_POST['db'] ?? '');
+    if ($db === '') {
+        flash('error', '请选择目标数据库');
+        redirect('/databases');
+    }
+    $file = $_FILES['sql'] ?? null;
+    if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        flash('error', '没有收到 SQL 文件（可能超过 PHP 上传上限 ' . ini_get('upload_max_filesize') . '）');
+        redirect('/databases?db=' . urlencode($db));
+    }
+    $name = (string)($file['name'] ?? 'import.sql');
+    if (!preg_match('/\.(sql|txt)$/i', $name)) {
+        flash('error', '只支持 .sql / .txt 文件');
+        redirect('/databases?db=' . urlencode($db));
+    }
+    $tmp = storage_path('tmp/import_' . date('Ymd_His') . '_' . bin2hex(random_bytes(3)) . '.sql');
+    @mkdir(dirname($tmp), 0777, true);
+    if (!move_uploaded_file((string)$file['tmp_name'], $tmp)) {
+        flash('error', '暂存上传文件失败');
+        redirect('/databases?db=' . urlencode($db));
+    }
+
+    $result = mysql_import_file($db, $tmp);
+    @unlink($tmp);
+    flash($result['ok'] ? 'success' : 'error', $result['message']);
+    redirect('/databases?db=' . urlencode($db));
+}
+
+/* ---------------------------- 慢查询报表 ---------------------------- */
+
+function databases_slow(): void
+{
+    $mb = (int)($_GET['mb'] ?? 4);
+    $mb = max(1, min(64, $mb));
+    $limit = (int)($_GET['limit'] ?? 20);
+    $limit = max(5, min(100, $limit));
+
+    $report = mysql_slow_aggregate($mb * 1024 * 1024, $limit);
+    $vars = mysql_env_variables();
+
+    render('databases_slow', [
+        'title' => '慢查询报表',
+        'active' => 'databases',
+        'report' => $report,
+        'mb' => $mb,
+        'limit' => $limit,
+        'slow_on' => strtolower((string)($vars['slow_query_log'] ?? 'off')) === 'on',
+        'long_query_time' => (string)($vars['long_query_time'] ?? ''),
+        'log_output' => (string)($vars['log_output'] ?? ''),
+    ], 'app');
+}
+
+function databases_slow_save(): void
+{
+    $enable = !empty($_POST['enable']);
+    $seconds = (string)($_POST['long_query_time'] ?? '2');
+    $result = mysql_env_set_variable('slow_query_log', $enable ? 'On' : 'Off');
+    if (!$result['ok']) {
+        flash('error', $result['message']);
+        redirect('/databases/slow');
+    }
+    $timeResult = mysql_env_set_variable('long_query_time', $seconds);
+    $messages = [$result['message'], $timeResult['message']];
+    flash($timeResult['ok'] ? 'success' : 'warning', implode('；', $messages));
+    redirect('/databases/slow');
+}
+
+/* ----------------------------- 复制状态 ----------------------------- */
+
+function databases_replication(): void
+{
+    render('databases_replication', [
+        'title' => '主从与同步',
+        'active' => 'databases',
+        'status' => mysql_replication_status(),
+        'version' => mysql_version_number(),
+        'host' => (string)config('database.host', '127.0.0.1'),
+        'port' => (string)config('database.port', '3306'),
+    ], 'app');
+}

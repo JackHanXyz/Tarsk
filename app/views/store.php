@@ -8,11 +8,12 @@ $statusMeta = [
     'running' => ['运行中', 'badge--ok'],
 ];
 $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
+$linuxManager = $platform === 'Linux' ? store_linux_manager() : null;
 ?>
 <div class="section-head">
   <div>
     <h2>软件商店</h2>
-    <p>Tarsk 可直接下载并接管 Nginx / PHP / Redis，站点配置会自动同步；其余系统软件支持检测与 winget 安装。</p>
+    <p><?= $platform === 'Windows' ? 'Tarsk 托管 Nginx / PHP / Redis，并可通过 winget 安装系统软件。' : '检测 Linux 系统软件，并通过本机包管理器异步安装（需 root 权限）。' ?></p>
   </div>
   <div class="toolbar">
     <a class="btn btn--ghost btn--sm" href="<?= url('/sites') ?>"><?= icon('globe', 14) ?>站点管理</a>
@@ -24,10 +25,13 @@ $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
   </div>
 </div>
 
-<?php if ($platform !== 'Windows'): ?>
-  <div class="alert alert--warning"><?= icon('alert', 16) ?><span>托管安装与 winget 安装仅支持 Windows；检测与其他功能不受影响。</span></div>
+<?php if ($platform === 'Linux'): ?>
+  <div class="alert alert--warning"><?= icon('alert', 16) ?><span>Linux 安装会调用检测到的 <?= e($linuxManager['key'] ?? '系统包管理器') ?>；服务需以 root 身份运行，Tarsk 不使用 sudo。安装任务在后台执行，可从下方读取状态和日志。</span></div>
+<?php elseif ($platform !== 'Windows'): ?>
+  <div class="alert alert--warning"><?= icon('alert', 16) ?><span>当前平台仅支持软件检测；自动安装暂不可用。</span></div>
 <?php endif; ?>
 
+<?php if ($managed): ?>
 <div class="section-head" style="margin-top:4px">
   <div>
     <h3 style="margin:0;font-family:var(--font-display);font-size:15px">运行环境（Tarsk 托管）</h3>
@@ -103,11 +107,12 @@ $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
     </article>
   <?php endforeach; ?>
 </div>
+<?php endif; ?>
 
 <div class="section-head" style="margin-top:26px">
   <div>
     <h3 style="margin:0;font-family:var(--font-display);font-size:15px">系统软件</h3>
-    <p>检测本机已有环境；缺失项可通过 winget 静默安装（MySQL 已作为面板数据库服务在使用）。</p>
+    <p><?= $platform === 'Windows' ? '检测本机已有环境；缺失项可通过 winget 静默安装。' : '检测本机已有环境；缺失项可通过系统包管理器一键安装。' ?></p>
   </div>
   <span class="badge badge--muted">已安装 <?= $installedCount ?> / <?= count($apps) ?></span>
 </div>
@@ -118,6 +123,8 @@ $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
 
 <div class="app-grid">
   <?php foreach ($apps as $app): ?>
+    <?php $canInstall = $platform === 'Windows' ? ($winget && $app['winget'] !== '') : ($platform === 'Linux' && !empty($app['linux_installable'])); ?>
+    <?php $installState = (string)($app['install_status']['status'] ?? ''); ?>
     <article class="app-card">
       <div class="app-card__head">
         <div class="app-card__id">
@@ -128,10 +135,11 @@ $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
           </div>
         </div>
         <span class="badge <?= $app['installed'] ? 'badge--ok' : 'badge--muted' ?>"><i></i><?= $app['installed'] ? '已安装' : '未安装' ?></span>
+        <?php if ($installState !== ''): ?><span class="badge <?= $installState === 'succeeded' ? 'badge--ok' : ($installState === 'failed' ? 'badge--danger' : 'badge--warn') ?>"><?= $installState === 'succeeded' ? '安装成功' : ($installState === 'failed' ? '安装失败' : '安装中') ?></span><?php endif; ?>
       </div>
       <p class="app-card__desc"><?= e($app['desc']) ?></p>
       <div class="app-card__meta">
-        <span><?= $app['installed'] ? ('版本 ' . e($app['version'] ?: '未知')) : ('winget：' . e($app['winget'] ?: '无')) ?></span>
+        <span><?= $app['installed'] ? ('版本 ' . e($app['version'] ?: '未知')) : ($platform === 'Windows' ? ('winget：' . e($app['winget'] ?: '无')) : ('Linux · ' . e($linuxManager['key'] ?? '未检测到包管理器'))) ?></span>
         <?php if ($app['installed'] && $app['path'] !== ''): ?>
           <span class="mono" title="<?= e($app['path']) ?>"><?= e(mb_strimwidth($app['path'], 0, 30, '…')) ?></span>
         <?php endif; ?>
@@ -145,10 +153,10 @@ $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
           </form>
         <?php else: ?>
           <form method="post" action="<?= url('/store/install') ?>" data-busy="正在后台启动安装…"
-            data-confirm="将通过 winget 静默安装 <?= e($app['name']) ?>，安装过程可能需要 1-3 分钟，确认继续？">
+            data-confirm="将通过 <?= e($platform === 'Windows' ? 'winget' : ($linuxManager['key'] ?? 'Linux 包管理器')) ?> 安装 <?= e($app['name']) ?>；Linux 安装需要 root 权限，确认继续？">
             <?= csrf_field() ?>
             <input type="hidden" name="key" value="<?= e($app['key']) ?>">
-            <button class="btn btn--primary btn--sm" type="submit" <?= ($platform === 'Windows' && $winget && $app['winget'] !== '') ? '' : 'disabled' ?>><?= icon('download', 13) ?>安装</button>
+            <button class="btn btn--primary btn--sm" type="submit" <?= $canInstall ? '' : 'disabled' ?>><?= icon('download', 13) ?>安装</button>
           </form>
         <?php endif; ?>
         <a class="btn btn--ghost btn--sm" href="<?= e($app['url']) ?>" target="_blank" rel="noopener"><?= icon('external', 13) ?>官网</a>
@@ -160,7 +168,7 @@ $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
 <?php if ($install_logs): ?>
 <div class="card mt-18">
   <div class="card__head">
-    <span class="card__title"><?= icon('terminal', 17) ?>winget 安装日志</span>
+    <span class="card__title"><?= icon('terminal', 17) ?>软件安装任务</span>
     <span class="badge badge--muted"><?= count($install_logs) ?></span>
   </div>
   <div class="card__body">
@@ -168,7 +176,7 @@ $installedCount = count(array_filter($apps, fn($a) => $a['installed']));
       <div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;margin-bottom:6px">
           <strong class="small mono"><?= e($log['name']) ?></strong>
-          <span class="small muted"><?= e($log['mtime']) ?></span>
+          <span class="small muted"><?= e($log['status'] ?? '未知状态') ?> · <?= e($log['mtime']) ?></span>
         </div>
         <div class="pre"><?= e($log['tail'] ?: '日志为空或安装尚未输出信息') ?></div>
       </div>

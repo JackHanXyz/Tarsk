@@ -2,3 +2,12 @@ config.php
 install.lock
 storage/
 *.log
+.work/
+.manus/
+__pycache__/
+*.pyc
+desktop/dist/
+desktop/build/
+desktop/__pycache__/
+outputs/*.exe
+*.bak.*

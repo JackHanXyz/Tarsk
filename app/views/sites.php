@@ -108,6 +108,8 @@ declare(strict_types=1);
               <td>
                 <div class="td-actions">
                   <a class="icon-btn" href="<?= url('/sites/' . (int)$site['id']) ?>" title="站点设置"><?= icon('settings', 14) ?></a>
+                  <a class="icon-btn" href="<?= url('/sites/' . (int)$site['id'] . '#quick-proxy') ?>" title="一键配置反向代理"><?= icon('zap', 14) ?></a>
+                  <a class="icon-btn" href="<?= url('/sites/' . (int)$site['id'] . '#quick-ssl') ?>" title="一键申请 SSL 证书"><?= icon('lock', 14) ?></a>
                   <a class="icon-btn" href="<?= url('/files?path=' . urlencode($site['name'])) ?>" title="浏览文件"><?= icon('folder', 14) ?></a>
                   <form method="post" action="<?= url('/sites/' . (int)$site['id'] . '/toggle') ?>">
                     <?= csrf_field() ?>

@@ -13,7 +13,37 @@ function deploy_catalog(): array
             'version' => '最新稳定版',
             'url' => 'https://wordpress.org/latest.zip',
             'icon' => 'globe',
-            'desc' => '全球最流行的博客与 CMS 建站程序。自动完成下载、解压、建库与 wp-config 配置。',
+            'desc' => '全球最流行的博客与 CMS。自动下载、解压、建库并写入 wp-config.php（含随机安全盐）。',
+            'needs_db' => true,
+            'tips' => '解压后打开站点即可进入安装向导。',
+        ],
+        'typecho' => [
+            'name' => 'Typecho',
+            'version' => 'v1.3.0',
+            'url' => 'https://github.com/typecho/typecho/releases/download/v1.3.0/typecho.zip',
+            'icon' => 'edit',
+            'desc' => '轻量级博客程序，单文件安装、占用小。适合小站与个人博客。',
+            'needs_db' => true,
+            'tips' => '安装向导会自行生成 config.inc.php；确认 usr/ 目录可写。',
+        ],
+        'discuz' => [
+            'name' => 'Discuz! X',
+            'version' => 'master（Gitee 源码）',
+            'url' => 'https://gitee.com/Discuz/DiscuzX/repository/archive/refs/heads/master.zip',
+            'source_sub' => 'upload',
+            'icon' => 'user',
+            'desc' => '老牌论坛程序，适合社区与站群。源码包会只部署 upload/ 目录内容。',
+            'needs_db' => true,
+            'tips' => '安装向导会写入 config/ 下的配置；建议部署完成后在站点设置里把默认文档改为 index.php。',
+        ],
+        'nextcloud' => [
+            'name' => 'Nextcloud',
+            'version' => 'latest',
+            'url' => 'https://download.nextcloud.com/server/releases/latest.zip',
+            'icon' => 'box',
+            'desc' => '自建网盘与协作平台。安装包较大（约 200 MB），需要较多 PHP 扩展与内存。',
+            'needs_db' => true,
+            'tips' => '需要 PHP 扩展：gd、zip、curl、mbstring、xml、intl、pdo_mysql；建议 memory_limit ≥ 512M。安装向导会创建 data/ 与 config/。',
         ],
     ];
 }
@@ -70,9 +100,13 @@ function deploy_run(): void
         . "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n"
         . "Invoke-WebRequest -Uri '" . $app['url'] . "' -OutFile '" . str_replace("'", "''", $zip) . "' -UseBasicParsing\n";
     ps_run($downloadScript, 900);
-    if (!is_file($zip) || filesize($zip) < 1000000) {
+    // 不同应用包体积差异很大（Typecho 约 0.6 MB，Nextcloud 约 200 MB），
+    // 只做"明显不完整"的下限校验，避免小包被误判为下载失败
+    $minSize = (int)($app['min_size'] ?? 20000);
+    if (!is_file($zip) || filesize($zip) < $minSize) {
+        $actual = is_file($zip) ? filesize($zip) . ' 字节' : '文件不存在';
         @unlink($zip);
-        flash('error', '应用包下载失败，请检查网络后重试');
+        flash('error', '应用包下载失败（' . $actual . '），请检查网络或代理后重试');
         redirect('/deploy');
     }
 
@@ -85,8 +119,20 @@ function deploy_run(): void
         600
     );
     @unlink($zip);
-    $sub = array_values(array_diff(scandir($extractDir) ?: [], ['.', '..']));
-    $source = count($sub) === 1 && is_dir($extractDir . '/' . $sub[0]) ? $extractDir . '/' . $sub[0] : $extractDir;
+    $sourceSub = (string)($app['source_sub'] ?? '');
+    if ($sourceSub !== '') {
+        $source = $extractDir . '/' . trim($sourceSub, '/');
+        // 有些包会多一层顶层目录，兜底再往下找一层
+        if (!is_dir($source)) {
+            $subs = array_values(array_diff(scandir($extractDir) ?: [], ['.', '..']));
+            if (count($subs) === 1 && is_dir($extractDir . '/' . $subs[0])) {
+                $source = $extractDir . '/' . $subs[0] . '/' . trim($sourceSub, '/');
+            }
+        }
+    } else {
+        $sub = array_values(array_diff(scandir($extractDir) ?: [], ['.', '..']));
+        $source = count($sub) === 1 && is_dir($extractDir . '/' . $sub[0]) ? $extractDir . '/' . $sub[0] : $extractDir;
+    }
     if (!is_dir($source)) {
         delete_path($extractDir);
         flash('error', '应用包解压失败');
@@ -114,6 +160,7 @@ function deploy_run(): void
     $dbName = '';
     $dbUser = '';
     $dbPass = '';
+    $dbFailed = false;
     if ((string)($_POST['create_db'] ?? '') === '1') {
         $dbName = preg_replace('/[^a-zA-Z0-9_]/', '_', (string)$site['name']);
         if (strlen($dbName) > 48) {
@@ -123,14 +170,18 @@ function deploy_run(): void
         $messages[] = $result['message'];
         if (!$result['ok']) {
             $dbName = '';
+            $dbFailed = true;
         }
     }
     [$dbUser, $dbPass] = mysql_admin_credentials();
 
     // 5. 应用专属配置
     if ($appKey === 'wordpress') {
-        $confMsg = deploy_configure_wordpress($sitePath, $dbName, $dbUser, $dbPass);
-        $messages[] = $confMsg;
+        $messages[] = deploy_configure_wordpress($sitePath, $dbName, $dbUser, $dbPass);
+    }
+    $messages = array_merge($messages, deploy_post_setup($appKey, $sitePath, $dbName));
+    if (!empty($app['tips'])) {
+        $messages[] = $app['tips'];
     }
 
     log_action('一键部署', $app['name'] . ' → ' . $site['name'], 'info');
@@ -139,7 +190,8 @@ function deploy_run(): void
     if (!in_array($port, [80], true)) {
         $url .= ':' . $port;
     }
-    flash('success', $app['name'] . ' 已部署到站点「' . $site['name'] . '」。访问 ' . $url . ' 完成安装向导。' . implode('；', array_filter($messages)));
+    $summary = $app['name'] . ' 已部署到站点「' . $site['name'] . '」。访问 ' . $url . ' 完成安装向导。' . implode('；', array_filter($messages));
+    flash($dbFailed ? 'warning' : 'success', $summary);
     redirect('/deploy');
 }
 
@@ -198,4 +250,45 @@ function deploy_configure_wordpress(string $sitePath, string $dbName, string $db
     return $dbName !== ''
         ? '已写入 wp-config.php（数据库 ' . $dbName . ' / ' . $dbUser . '）'
         : '已写入 wp-config.php（使用面板数据库账号，未单独建库）';
+}
+
+/**
+ * 各应用部署后的目录准备（只做确定性强的事：建可写目录、提示手动步骤）
+ */
+function deploy_post_setup(string $appKey, string $sitePath, string $dbName): array
+{
+    $messages = [];
+    switch ($appKey) {
+        case 'typecho':
+            foreach (['usr', 'usr/themes', 'usr/plugins', 'usr/uploads'] as $dir) {
+                if (!is_dir($sitePath . '/' . $dir)) {
+                    @mkdir($sitePath . '/' . $dir, 0777, true);
+                }
+            }
+            $messages[] = '已准备 usr/ 可写目录；数据库请在安装向导里填写' . ($dbName !== '' ? '（可用 ' . $dbName . '）' : '');
+            break;
+
+        case 'discuz':
+            foreach (['config', 'data', 'data/attachment', 'data/cache', 'uc_client/data', 'uc_server/data'] as $dir) {
+                if (!is_dir($sitePath . '/' . $dir)) {
+                    @mkdir($sitePath . '/' . $dir, 0777, true);
+                }
+            }
+            $messages[] = '已创建 config/ 与 data/ 可写目录；如站点仍未生效，请在站点设置把默认文档改成 index.php';
+            break;
+
+        case 'nextcloud':
+            foreach (['data', 'config', 'apps', 'assets'] as $dir) {
+                if (!is_dir($sitePath . '/' . $dir)) {
+                    @mkdir($sitePath . '/' . $dir, 0777, true);
+                }
+            }
+            $messages[] = '已创建 data/ 与 config/ 目录；首次访问会进入安装向导' . ($dbName !== '' ? '（数据库可用 ' . $dbName . '）' : '');
+            break;
+
+        case 'wordpress':
+            $messages[] = '数据库连接已写入 wp-config.php';
+            break;
+    }
+    return $messages;
 }

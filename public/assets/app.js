@@ -47,6 +47,43 @@
     });
   }
 
+  /* ----------------------------- 导航搜索 ----------------------------- */
+  var navSearch = $('[data-nav-search]');
+  var nav = $('.nav');
+  if (navSearch && nav) {
+    var filterNav = function () {
+      var query = navSearch.value.trim().toLocaleLowerCase();
+      $$('.nav__group', nav).forEach(function (heading) {
+        var entries = [];
+        var sibling = heading.nextElementSibling;
+        while (sibling && !sibling.classList.contains('nav__group')) {
+          if (sibling.classList.contains('nav__item')) { entries.push(sibling); }
+          sibling = sibling.nextElementSibling;
+        }
+        var headingMatches = query && heading.textContent.toLocaleLowerCase().indexOf(query) !== -1;
+        var visible = 0;
+        entries.forEach(function (entry) {
+          var match = !query || headingMatches || entry.textContent.toLocaleLowerCase().indexOf(query) !== -1;
+          entry.hidden = !match;
+          if (match) { visible += 1; }
+        });
+        heading.hidden = visible === 0;
+      });
+    };
+    navSearch.addEventListener('input', filterNav);
+    document.addEventListener('keydown', function (event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        navSearch.focus();
+        navSearch.select();
+      } else if (event.key === 'Escape' && document.activeElement === navSearch) {
+        navSearch.value = '';
+        filterNav();
+        navSearch.blur();
+      }
+    });
+  }
+
   /* -------------------------------- 时钟 -------------------------------- */
   function tickClock() {
     var node = $('#clock');
@@ -135,6 +172,20 @@
       button.disabled = true;
       button.textContent = form.getAttribute('data-busy') || '处理中…';
       toast(form.getAttribute('data-busy') || '处理中…');
+    });
+  });
+
+  /* ------------------------------- 全选 ------------------------------- */
+  $$('[data-check-all]').forEach(function (master) {
+    var scope = master.closest('form') || document;
+    var boxes = $$('input[type="checkbox"][name]', scope).filter(function (box) { return box !== master; });
+    master.addEventListener('change', function () {
+      boxes.forEach(function (box) { box.checked = master.checked; });
+    });
+    boxes.forEach(function (box) {
+      box.addEventListener('change', function () {
+        master.checked = boxes.length > 0 && boxes.every(function (b) { return b.checked; });
+      });
     });
   });
 
@@ -348,8 +399,8 @@
 
       if (seriesIndex === 0) {
         var gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
-        gradient.addColorStop(0, 'rgba(59, 130, 246, .16)');
-        gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+        gradient.addColorStop(0, 'rgba(217, 110, 78, .18)');
+        gradient.addColorStop(1, 'rgba(217, 110, 78, 0)');
         ctx.save();
         ctx.beginPath();
         points.forEach(function (point, index) {
@@ -483,5 +534,121 @@
     if (monitorCanvas.parentNode) {
       new ResizeObserver(debounce(drawMonitor, 160)).observe(monitorCanvas.parentNode);
     }
+
+    var lastMonitorNet = null;
+    var lastMonitorChartAt = Date.now();
+    var monitorBytes = function (value) {
+      var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      var n = Math.max(0, Number(value) || 0);
+      var i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return (i ? n.toFixed(1) : n.toFixed(0)) + ' ' + units[i];
+    };
+    var monitorPercent = function (used, total) {
+      return total > 0 ? Math.max(0, Math.min(100, Number(used) / Number(total) * 100)) : 0;
+    };
+    var renderInterfaces = function (rows) {
+      var host = $('#monNetInterfaces');
+      if (!host || !Array.isArray(rows)) { return; }
+      host.textContent = '';
+      if (!rows.length) {
+        var empty = document.createElement('div');
+        empty.className = 'service-row';
+        empty.textContent = '暂未读取到网卡明细';
+        host.appendChild(empty);
+        return;
+      }
+      rows.forEach(function (item) {
+        var row = document.createElement('div');
+        var name = document.createElement('strong');
+        var counters = document.createElement('span');
+        row.className = 'service-row';
+        name.className = 'mono';
+        counters.className = 'small muted';
+        name.textContent = String(item.name || 'interface');
+        counters.textContent = 'RX ' + monitorBytes(item.rx) + ' · TX ' + monitorBytes(item.tx);
+        row.appendChild(name);
+        row.appendChild(counters);
+        host.appendChild(row);
+      });
+    };
+    var applyMonitorMetrics = function (metrics) {
+      var cpu = Number(metrics.cpu || 0);
+      var memPct = monitorPercent(metrics.mem_used, metrics.mem_total);
+      var diskPct = monitorPercent(metrics.disk_used, metrics.disk_total);
+      if ($('#monCpu')) { $('#monCpu').innerHTML = cpu.toFixed(1) + '<small>%</small>'; }
+      if ($('#monCpuTick')) { $('#monCpuTick').textContent = metrics.time || ''; }
+      if ($('#monCpuCores')) { $('#monCpuCores').textContent = metrics.cpu_cores ? String(metrics.cpu_cores) : '—'; }
+      if ($('#monLoad1')) { $('#monLoad1').textContent = Number(metrics.load1 || 0).toFixed(2); }
+      if ($('#monLoad5')) { $('#monLoad5').textContent = Number(metrics.load5 || 0).toFixed(2); }
+      if ($('#monLoad15')) { $('#monLoad15').textContent = Number(metrics.load15 || 0).toFixed(2); }
+      if ($('#monMem')) { $('#monMem').textContent = monitorBytes(metrics.mem_used); }
+      if ($('#monMemPct')) { $('#monMemPct').textContent = memPct.toFixed(1) + '%'; }
+      if ($('#monMemBar')) { $('#monMemBar').style.width = memPct + '%'; }
+      if ($('#monSwap')) { $('#monSwap').textContent = monitorBytes(metrics.swap_used) + ' / ' + monitorBytes(metrics.swap_total); }
+      if ($('#monDisk')) { $('#monDisk').textContent = monitorBytes(metrics.disk_used); }
+      if ($('#monDiskPct')) { $('#monDiskPct').textContent = diskPct.toFixed(1) + '%'; }
+      if ($('#monDiskBar')) { $('#monDiskBar').style.width = diskPct + '%'; }
+
+      var sampleAt = Number(metrics.sampled_at);
+      if (!Number.isFinite(sampleAt) || sampleAt <= 0) { sampleAt = performance.now() / 1000; }
+      var currentRx = Number(metrics.net_rx || 0);
+      var currentTx = Number(metrics.net_tx || 0);
+      if (lastMonitorNet && sampleAt > lastMonitorNet.at) {
+        var elapsed = sampleAt - lastMonitorNet.at;
+        if (elapsed >= 0.1) {
+          var down = Math.max(0, currentRx - lastMonitorNet.rx) / elapsed;
+          var up = Math.max(0, currentTx - lastMonitorNet.tx) / elapsed;
+          if ($('#monNetDown')) { $('#monNetDown').textContent = monitorBytes(down) + '/s'; }
+          if ($('#monNetUp')) { $('#monNetUp').textContent = monitorBytes(up) + '/s'; }
+        }
+      }
+      if (!lastMonitorNet || sampleAt > lastMonitorNet.at) {
+        lastMonitorNet = { at: sampleAt, rx: currentRx, tx: currentTx };
+      }
+      renderInterfaces(metrics.net_interfaces || []);
+
+      if (Date.now() - lastMonitorChartAt >= 30000) {
+        series.push({
+          t: metrics.time || new Date().toTimeString().slice(0, 5),
+          cpu: cpu,
+          mem: memPct,
+          disk: diskPct
+        });
+        if (series.length > 2880) { series.shift(); }
+        lastMonitorChartAt = Date.now();
+        drawMonitor();
+      }
+    };
+    var monitorStatus = $('#monitorStatus');
+    var monitorStatusChip = $('#monitorStatusChip');
+    var monitorPending = false;
+    var setMonitorStatus = function (message, failed) {
+      if (monitorStatus) { monitorStatus.textContent = message; }
+      if (monitorStatusChip) { monitorStatusChip.classList.toggle('chip--danger', !!failed); }
+    };
+    var monitorPoll = function () {
+      if (monitorPending) { return; }
+      monitorPending = true;
+      var startedAt = performance.now();
+      fetch('/api/metrics?fresh=1', { cache: 'no-store', headers: { 'Accept': 'application/json' } })
+        .then(function (response) {
+          if (!response.ok) { throw new Error(response.status === 401 ? '登录状态已失效' : 'HTTP ' + response.status); }
+          return response.json();
+        })
+        .then(function (data) {
+          if (!data || !data.ok || !data.metrics) { throw new Error((data && data.message) || '监控接口响应异常'); }
+          applyMonitorMetrics(data.metrics);
+          var latency = Math.round(performance.now() - startedAt);
+          setMonitorStatus('已更新 ' + (data.metrics.time || '') + ' · RTT ' + latency + 'ms', false);
+        })
+        .catch(function (error) {
+          setMonitorStatus((error && error.message) ? '刷新失败：' + error.message : '刷新失败，保留上次数据', true);
+        })
+        .finally(function () { monitorPending = false; });
+    };
+    var monitorPollMs = Math.max(3, Number(window.TARSK_REFRESH_INTERVAL) || 3) * 1000;
+    setInterval(monitorPoll, monitorPollMs);
+    setTimeout(monitorPoll, 700);
   }
 })();

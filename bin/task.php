@@ -37,7 +37,15 @@ if (!$task) {
     exit(1);
 }
 
-$result = task_execute($task);
+// 自定义表达式：Windows 用「每分钟触发 + 到期判断」模拟 5 段式
+$expr = trim((string)($task['cron_expr'] ?? ''));
+if ((string)($task['schedule'] ?? '') === 'custom' && $expr !== '' && !cron_expr_is_reboot($expr)) {
+    if (!cron_expr_matches($expr)) {
+        exit(0);
+    }
+}
+
+$result = task_execute($task, 'schedule');
 execute(
     'UPDATE ' . t('cron') . ' SET last_run_at = ?, last_result = ? WHERE id = ?',
     [now(), mb_substr($result['message'], 0, 255), $id]

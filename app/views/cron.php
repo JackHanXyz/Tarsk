@@ -67,6 +67,7 @@ declare(strict_types=1);
               <td><span class="badge <?= $task['status'] === 'enabled' ? 'badge--ok' : 'badge--muted' ?>"><i></i><?= $task['status'] === 'enabled' ? '启用' : '停用' ?></span></td>
               <td>
                 <div class="td-actions">
+                  <a class="icon-btn" href="<?= url('/cron/' . (int)$task['id'] . '/history') ?>" title="执行历史（<?= (int)($task['history_count'] ?? 0) ?> 条）"><?= icon('list', 13) ?></a>
                   <form method="post" action="<?= url('/cron/' . (int)$task['id'] . '/run') ?>">
                     <?= csrf_field() ?>
                     <button class="icon-btn" type="submit" title="立即执行"><?= icon('play', 13) ?></button>
@@ -116,18 +117,27 @@ declare(strict_types=1);
         </div>
         <div class="field">
           <label>执行频率</label>
-          <select class="input" name="schedule">
+          <select class="input" name="schedule" id="cronSchedule">
             <option value="daily">每天</option>
             <option value="every_minute">每分钟</option>
             <option value="every_5_minutes">每 5 分钟</option>
             <option value="hourly">每小时</option>
             <option value="weekly">每周日</option>
             <option value="boot">开机时</option>
+            <option value="custom">自定义 cron 表达式</option>
           </select>
         </div>
         <div class="field">
           <label>执行时间</label>
           <input class="input" type="time" name="run_time" value="03:00">
+        </div>
+        <div class="field span-2" id="cronExprField" style="display:none">
+          <label>cron 表达式（5 段：分 时 日 月 周）</label>
+          <input class="input mono" type="text" name="cron_expr" placeholder="0 3 * * *  → 每天 03:00；0 4 1 * * → 每月 1 号 04:00">
+          <span class="hint">
+            支持 <code class="mono">*</code>、<code class="mono">*/n</code>、<code class="mono">a-b</code>、<code class="mono">a,b</code> 与组合，可用 <code class="mono">@daily</code> / <code class="mono">@hourly</code> / <code class="mono">@weekly</code> / <code class="mono">@monthly</code> / <code class="mono">@reboot</code>。
+            Windows 下由「每分钟触发 + 到期判断」实现，精度为分钟。
+          </span>
         </div>
 
         <div class="field span-2 cron-field" data-for="command">
@@ -215,5 +225,22 @@ declare(strict_types=1);
   }
   typeSelect.addEventListener('change', sync);
   sync();
+
+  // 自定义 cron 表达式：仅在选中「自定义」时显示表达式输入框
+  var scheduleSelect = document.getElementById('cronSchedule');
+  var exprField = document.getElementById('cronExprField');
+  if (scheduleSelect && exprField) {
+    var exprInput = exprField.querySelector('input[name="cron_expr"]');
+    var syncExpr = function () {
+      var custom = scheduleSelect.value === 'custom';
+      exprField.style.display = custom ? '' : 'none';
+      if (exprInput) {
+        exprInput.disabled = !custom;
+        if (custom) { exprInput.focus(); }
+      }
+    };
+    scheduleSelect.addEventListener('change', syncExpr);
+    syncExpr();
+  }
 })();
 </script>

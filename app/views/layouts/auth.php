@@ -10,14 +10,15 @@ $panelName = $panel_name ?? setting('panel_name', config('app.name', 'Tarsk'));
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($title ?? '登录') ?> · <?= e($panelName) ?></title>
 <link rel="stylesheet" href="<?= url('/assets/app.css') ?>?v=<?= e(config('app.version', '1.0.0')) ?>">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232563eb'/><text x='50' y='70' font-size='58' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>T</text></svg>">
+<link rel="stylesheet" href="<?= url('/assets/ui-kit.css') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/ui-kit.css') ?>">
+<link rel="icon" type="image/svg+xml" href="<?= url('/assets/tarsk-avatar.svg') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/tarsk-avatar.svg') ?>">
 </head>
 <body class="auth-body">
 <main class="auth">
   <section class="auth__brand">
     <div class="auth__glow"></div>
     <div class="auth__brand-inner">
-      <div class="auth__logo">T</div>
+      <div class="auth__logo"><img src="<?= url('/assets/tarsk-avatar.svg') ?>?v=<?= (int)@filemtime(app_root() . '/public/assets/tarsk-avatar.svg') ?>" alt=""></div>
       <h1><?= e($panelName) ?></h1>
       <p>轻量、直接、可编程的服务器运维面板。<br>站点、文件、数据库、容器与监控，一处掌控。</p>
       <ul class="auth__points">

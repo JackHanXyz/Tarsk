@@ -189,50 +189,80 @@ function ssl_letsencrypt(): void
     @set_time_limit(180);
 
     $siteId = (int)($_POST['site_id'] ?? 0);
+    $returnTo = !empty($_POST['quick']) && $siteId > 0 ? '/sites/' . $siteId : '/ssl';
+    $fail = static function (string $message) use ($returnTo): void {
+        flash('error', $message);
+        redirect($returnTo);
+    };
     $email = trim((string)($_POST['email'] ?? ''));
     $site = $siteId > 0 ? fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId]) : null;
     if (!$site) {
-        flash('error', '请选择站点');
-        redirect('/ssl');
+        $fail('请选择有效站点');
     }
     $domain = trim((string)$site['domain']);
     if ($domain === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9.\-]{1,190}$/', $domain)) {
-        flash('error', '站点未绑定有效域名，无法申请 Let\'s Encrypt 证书');
-        redirect('/ssl');
+        $fail('站点未绑定有效域名，无法申请 Let\'s Encrypt 证书');
     }
     if ($email === '') {
         $email = 'admin@' . $domain;
     }
+    if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+        $fail('通知邮箱格式不正确');
+    }
     $sitePath = str_replace('\\', '/', (string)$site['path']);
     if (!is_dir($sitePath)) {
-        flash('error', '站点目录不存在');
-        redirect('/ssl');
+        $fail('站点目录不存在');
+    }
+    if (($site['status'] ?? '') !== 'running') {
+        $fail('请先启动站点，再申请证书');
     }
 
-    if (!managed_nginx_installed() || !runtime_state('nginx')['running']) {
-        flash('error', '请先在软件商店安装并启动托管 Nginx（HTTP-01 验证需要）');
-        redirect('/ssl');
+    $managed = PHP_OS_FAMILY === 'Windows' && managed_nginx_installed() && runtime_state('nginx')['running'];
+    $linuxSystem = PHP_OS_FAMILY === 'Linux' && find_nginx_bin() !== '' && service_running('nginx') && nginx_vhost_dir() !== '';
+    if (!$managed && !$linuxSystem) {
+        $fail('需要运行中的托管 Nginx，或运行中的 Linux 系统 Nginx（且已启用站点 include 目录）');
     }
-    if (active_web_port() !== 80) {
-        flash('warning', '提示：Let\'s Encrypt 要求域名的 80 端口可访问本站点目录；当前站点端口为 ' . active_web_port() . '，若有端口映射可忽略');
+
+    $confPath = site_conf_path((string)$site['name']);
+    $hadConf = is_file($confPath);
+    $previousConf = $hadConf ? (string)@file_get_contents($confPath) : '';
+    $restoreConfig = static function () use ($confPath, $hadConf, $previousConf): void {
+        if ($hadConf) { @file_put_contents($confPath, $previousConf, LOCK_EX); } else { @unlink($confPath); }
+        runtime_nginx_reload();
+    };
+    $challengeConfig = write_site_vhost($site, false);
+    if (!$challengeConfig['ok'] || !runtime_nginx_reload()) {
+        $restoreConfig();
+        $fail('无法为 HTTP-01 验证应用站点配置：' . ($challengeConfig['ok'] ? 'Nginx reload 失败' : $challengeConfig['message']));
     }
 
     $result = acme_issue([$domain], $sitePath, $email);
     if (!$result['ok']) {
-        flash('error', '签发失败：' . $result['message']);
-        redirect('/ssl');
+        $restoreConfig();
+        $fail('签发失败：' . $result['message']);
     }
 
+    $certPath = (string)$result['cert'];
+    $keyPath = (string)$result['key'];
     execute(
         'INSERT INTO ' . t('certs') . ' (site_id, domain, cert_path, key_path, issuer, not_before, not_after, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        [$siteId, $domain, $result['cert'], $result['key'], "Let's Encrypt", now(), $result['expires'], 'letsencrypt', now()]
+        [$siteId, $domain, $certPath, $keyPath, "Let's Encrypt", now(), $result['expires'], 'letsencrypt', now()]
     );
     execute('UPDATE ' . t('sites') . ' SET ssl_enabled = 1 WHERE id = ?', [$siteId]);
-    write_site_vhost(fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId]));
+    $finalConfig = write_site_vhost(fetch_one('SELECT * FROM ' . t('sites') . ' WHERE id = ?', [$siteId]), false);
+    if (!$finalConfig['ok'] || !runtime_nginx_reload()) {
+        execute('UPDATE ' . t('sites') . ' SET ssl_enabled = ? WHERE id = ?', [(int)($site['ssl_enabled'] ?? 0), $siteId]);
+        execute('DELETE FROM ' . t('certs') . ' WHERE site_id = ? AND cert_path = ?', [$siteId, $certPath]);
+        if ($certPath !== '') { @unlink($certPath); }
+        if ($keyPath !== '') { @unlink($keyPath); }
+        $restoreConfig();
+        $fail('证书已签发但 HTTPS 配置未能通过校验/重载，已回滚并清理新证书：' . ($finalConfig['ok'] ? 'Nginx reload 失败' : $finalConfig['message']));
+    }
 
     log_action('签发 Let\'s Encrypt 证书', $domain);
-    flash('success', 'Let\'s Encrypt 证书签发成功，已自动配置到站点（有效期至 ' . $result['expires'] . '）');
-    redirect('/ssl');
+    $portNote = active_web_port() !== 80 ? '；HTTP-01 要求公网 80 端口映射至本站点' : '';
+    flash('success', 'Let\'s Encrypt 证书签发成功，已测试配置并启用 HTTPS（有效期至 ' . $result['expires'] . '）' . $portNote);
+    redirect($returnTo);
 }
 
 function ssl_renew(): void

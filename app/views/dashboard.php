@@ -15,6 +15,20 @@ $memBarClass = $memPct >= 85 ? 'bar__fill--danger' : ($memPct >= 70 ? 'bar__fill
 $diskBarClass = $diskPct >= 85 ? 'bar__fill--danger' : ($diskPct >= 70 ? 'bar__fill--warn' : '');
 ?>
 
+<section class="dashboard-intro">
+  <div class="dashboard-intro__copy">
+    <div class="dashboard-intro__eyebrow">NODE / LIVE SNAPSHOT</div>
+    <h2>服务器运行概览</h2>
+    <p><span class="mono"><?= e($metrics['hostname'] ?? '本机') ?></span> · <?= e($metrics['os_family'] ?? PHP_OS_FAMILY) ?> · 核心资源与服务状态</p>
+  </div>
+  <div class="dashboard-intro__actions">
+    <span class="dashboard-intro__status"><i class="dot dot--ok"></i>实时采样 <small>EVERY <?= (int)$refresh ?>S</small></span>
+    <?php if (can('site.manage')): ?>
+      <a class="btn btn--primary btn--sm" href="<?= url('/sites') ?>"><?= icon('globe', 14) ?>管理站点</a>
+    <?php endif; ?>
+  </div>
+</section>
+
 <section class="stats">
   <article class="stat">
     <div class="stat__head">

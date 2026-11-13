@@ -66,7 +66,7 @@ After=network.target mysql.service
 [Service]
 Type=simple
 WorkingDirectory=$ROOT
-ExecStart=$PHP_BIN -S 0.0.0.0:$PORT -t public public/router.php
+ExecStart=$PHP_BIN -S 127.0.0.1:$PORT -t public public/router.php
 Restart=always
 RestartSec=3
 
@@ -78,7 +78,7 @@ EOF
   echo "服务已启动：systemctl status tarsk"
 else
   echo "未以 root 运行，跳过 systemd 注册。可手动启动："
-  echo "  cd \"$ROOT\" && php -S 0.0.0.0:$PORT -t public public/router.php"
+  echo "  cd \"$ROOT\" && php -S 127.0.0.1:$PORT -t public public/router.php"
 fi
 
 echo ""

@@ -46,9 +46,17 @@ function login_submit(): void
 
     login_guard_reset($ip, $username);
 
+    if (($row['status'] ?? 'enabled') === 'disabled') {
+        log_action('登录被拒', '账号已停用：' . $username, 'warning');
+        flash('error', '该账号已被停用，请联系管理员');
+        redirect('/login');
+    }
+
     // 已启用两步验证：先验证动态码再完成登录
     if ((int)($row['totp_enabled'] ?? 0) === 1 && (string)($row['totp_secret'] ?? '') !== '') {
+        session_regenerate_id(true);
         $_SESSION['tfa_pending_uid'] = (int)$row['id'];
+        $_SESSION['tfa_pending_at'] = time();
         redirect('/login/2fa');
     }
 
@@ -60,7 +68,9 @@ function login_2fa_page(): void
     if (current_user()) {
         redirect('/');
     }
-    if (empty($_SESSION['tfa_pending_uid'])) {
+    $pendingAt = (int)($_SESSION['tfa_pending_at'] ?? 0);
+    if (empty($_SESSION['tfa_pending_uid']) || $pendingAt <= 0 || time() - $pendingAt > 300) {
+        unset($_SESSION['tfa_pending_uid'], $_SESSION['tfa_pending_at']);
         redirect('/login');
     }
     render('auth/login_2fa', [
@@ -72,24 +82,43 @@ function login_2fa_page(): void
 function login_2fa_submit(): void
 {
     $uid = (int)($_SESSION['tfa_pending_uid'] ?? 0);
-    $row = $uid > 0 ? fetch_one('SELECT * FROM ' . t('users') . ' WHERE id = ?', [$uid]) : null;
-    if (!$row) {
+    $pendingAt = (int)($_SESSION['tfa_pending_at'] ?? 0);
+    if ($pendingAt <= 0 || time() - $pendingAt > 300) {
+        unset($_SESSION['tfa_pending_uid'], $_SESSION['tfa_pending_at']);
+        flash('error', '两步验证已过期，请重新登录');
         redirect('/login');
+    }
+    $row = $uid > 0 ? fetch_one('SELECT * FROM ' . t('users') . ' WHERE id = ?', [$uid]) : null;
+    if (!$row || ($row['status'] ?? 'enabled') !== 'enabled'
+        || (int)($row['totp_enabled'] ?? 0) !== 1 || (string)($row['totp_secret'] ?? '') === '') {
+        unset($_SESSION['tfa_pending_uid'], $_SESSION['tfa_pending_at']);
+        redirect('/login');
+    }
+    $ip = client_ip();
+    $guardUser = '2fa:' . (string)$row['username'];
+    $remaining = login_guard_remaining($ip, $guardUser);
+    if ($remaining > 0) {
+        flash('error', '尝试次数过多，请在 ' . (int)ceil($remaining / 60) . ' 分钟后再试');
+        redirect('/login/2fa');
     }
     $code = trim((string)($_POST['code'] ?? ''));
     if (!totp_verify((string)$row['totp_secret'], $code)) {
         usleep(300000);
+        $guard = login_guard_fail($ip, $guardUser);
         log_action('两步验证失败', '账号 ' . $row['username'], 'warning', (int)$row['id'], (string)$row['username']);
-        flash('error', '动态验证码不正确，请重试');
+        flash('error', $guard['locked']
+            ? '动态验证码错误次数过多，请稍后重新登录'
+            : '动态验证码不正确，还可尝试 ' . $guard['remaining'] . ' 次');
         redirect('/login/2fa');
     }
+    login_guard_reset($ip, $guardUser);
     complete_login($row);
 }
 
 function complete_login(array $row): void
 {
     session_regenerate_id(true);
-    unset($_SESSION['tfa_pending_uid']);
+    unset($_SESSION['tfa_pending_uid'], $_SESSION['tfa_pending_at']);
     $_SESSION['uid'] = (int)$row['id'];
     execute(
         'UPDATE ' . t('users') . ' SET last_login_at = ?, last_ip = ? WHERE id = ?',

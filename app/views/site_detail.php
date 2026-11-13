@@ -7,6 +7,8 @@ declare(strict_types=1);
       <a class="badge badge--muted" href="<?= url('/sites') ?>"><?= icon('arrow-left', 12) ?>站点列表</a>
       <span class="badge <?= $site['status'] === 'running' ? 'badge--ok' : 'badge--muted' ?>"><i></i><?= $site['status'] === 'running' ? '运行中' : '已停止' ?></span>
       <?php if ($site['ssl_enabled']): ?><span class="badge badge--info">HTTPS</span><?php endif; ?>
+      <?php if (!empty($site['http2_enabled'])): ?><span class="badge badge--info">HTTP/2</span><?php endif; ?>
+      <?php if ((int)($site['rate_limit'] ?? 0) > 0): ?><span class="badge badge--warn">限流 <?= (int)$site['rate_limit'] ?>r/s</span><?php endif; ?>
     </div>
     <h2><?= e($site['name']) ?></h2>
     <p><?= e($site['domain'] ?: '未绑定域名') ?> · 端口 <?= (int)$effective_port ?><?= $nginx_managed ? ' · Tarsk 托管 Nginx' : '' ?></p>
@@ -88,6 +90,42 @@ declare(strict_types=1);
             </label>
           </div>
           <div class="field span-2">
+            <label>上传与流量限制</label>
+            <div class="form-grid" style="gap:12px">
+              <div class="field">
+                <label class="small">单请求上传上限</label>
+                <input class="input mono" type="text" name="upload_size" value="<?= e($site['upload_size'] ?: '64m') ?>" placeholder="64m">
+                <span class="hint">Nginx client_max_body_size，如 64m / 1g</span>
+              </div>
+              <div class="field">
+                <label class="small">限流速率（请求/秒）</label>
+                <input class="input mono" type="number" name="rate_limit" min="0" max="10000" value="<?= (int)($site['rate_limit'] ?? 0) ?>" placeholder="0">
+                <span class="hint">0 = 不限流，防 CC 建议 5~20</span>
+              </div>
+              <div class="field">
+                <label class="small">突发队列（burst）</label>
+                <input class="input mono" type="number" name="rate_burst" min="0" max="100000" value="<?= (int)($site['rate_burst'] ?? 0) ?>" placeholder="默认 2 倍速率">
+                <span class="hint">允许瞬时超出的请求数，超出返回 503</span>
+              </div>
+              <div class="field">
+                <label class="small">单 IP 并发连接</label>
+                <input class="input mono" type="number" name="conn_limit" min="0" max="10000" value="<?= (int)($site['conn_limit'] ?? 0) ?>" placeholder="0">
+                <span class="hint">0 = 不限制，limit_conn 上限</span>
+              </div>
+            </div>
+          </div>
+          <div class="field span-2">
+            <label>HTTPS 加固</label>
+            <label class="checkbox">
+              <input type="checkbox" name="http2_enabled" value="1" <?= !empty($site['http2_enabled']) ? 'checked' : '' ?>>
+              HTTP/2（443 端口启用多路复用，需已启用证书）
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" name="hsts_enabled" value="1" <?= !empty($site['hsts_enabled']) ? 'checked' : '' ?>>
+              HSTS（Strict-Transport-Security，max-age 1 年 + includeSubDomains）
+            </label>
+          </div>
+          <div class="field span-2">
             <label>反向代理目标</label>
             <input class="input mono" type="text" name="proxy_pass" value="<?= e($site['proxy_pass'] ?? '') ?>" placeholder="http://127.0.0.1:3000">
             <span class="hint">支持 http:// 或 https:// 开头的主机:端口，可带路径前缀。启用后站点不再走 PHP。</span>
@@ -119,6 +157,17 @@ declare(strict_types=1);
         <dt>Nginx 配置</dt><dd class="mono small"><?= e($conf_path) ?></dd>
         <dt>访问日志</dt><dd class="mono small"><?= e($log_path ?: '未启用') ?></dd>
         <dt>创建时间</dt><dd><?= e(date('Y-m-d H:i', strtotime($site['created_at']))) ?></dd>
+        <dt>上传上限</dt><dd class="mono"><?= e(site_upload_limit($site)) ?></dd>
+        <dt>流量限制</dt><dd><?php
+          $limitParts = [];
+          if ((int)($site['rate_limit'] ?? 0) > 0) {
+              $limitParts[] = (int)$site['rate_limit'] . ' 请求/秒';
+          }
+          if ((int)($site['conn_limit'] ?? 0) > 0) {
+              $limitParts[] = '单 IP 并发 ' . (int)$site['conn_limit'];
+          }
+          echo $limitParts ? e(implode(' · ', $limitParts)) : '未限流';
+        ?></dd>
         <dt>HTTPS</dt><dd><?= $site['ssl_enabled'] ? '已启用' : '未启用' ?><?= !empty($site['force_https']) && $site['ssl_enabled'] ? ' · 强制跳转' : '' ?></dd>
       </dl>
     </div>
@@ -131,6 +180,46 @@ declare(strict_types=1);
   <span>反向代理已启用，当前请求转发至 <code class="mono"><?= e($site['proxy_pass']) ?></code>。若目标服务未运行，站点会返回 502。</span>
 </div>
 <?php endif; ?>
+
+<section class="grid grid--2 mt-18">
+  <article class="card" id="quick-proxy">
+    <div class="card__head"><span class="card__title"><?= icon('zap', 17) ?>一键配置反向代理</span><span class="badge <?= !empty($site['proxy_enabled']) ? 'badge--ok' : 'badge--muted' ?>"><?= !empty($site['proxy_enabled']) ? '已启用' : '未启用' ?></span></div>
+    <form method="post" action="<?= url('/sites/' . (int)$site['id'] . '/proxy') ?>" data-confirm="确认写入并测试 Nginx 配置，然后立即 reload？">
+      <?= csrf_field() ?>
+      <div class="card__body">
+        <div class="field">
+          <label>后端服务地址</label>
+          <input class="input mono" type="url" name="proxy_pass" value="<?= e($site['proxy_pass'] ?? '') ?>" placeholder="http://127.0.0.1:3000" required>
+          <span class="hint">支持 http:// 或 https://、主机名/IP、端口和路径前缀。请确认后端服务已启动。</span>
+        </div>
+      </div>
+      <div class="card__foot" style="display:flex;justify-content:flex-end;gap:8px">
+        <?php if (!empty($site['proxy_enabled'])): ?><button class="btn btn--ghost btn--sm" type="submit" name="action" value="disable" formnovalidate>关闭代理</button><?php endif; ?>
+        <button class="btn btn--primary btn--sm" type="submit" name="action" value="enable"><?= icon('zap', 13) ?>配置并应用</button>
+      </div>
+    </form>
+  </article>
+
+  <article class="card" id="quick-ssl">
+    <div class="card__head"><span class="card__title"><?= icon('lock', 17) ?>一键申请 SSL 证书</span><span class="badge <?= !empty($site['ssl_enabled']) ? 'badge--ok' : 'badge--muted' ?>"><?= !empty($site['ssl_enabled']) ? 'HTTPS 已启用' : '未启用' ?></span></div>
+    <form method="post" action="<?= url('/ssl/letsencrypt') ?>" data-confirm="将向 Let's Encrypt 提交 <?= e((string)($site['domain'] ?? '')) ?> 的公开证书申请。请确认域名已解析到本服务器且 HTTP 80 端口可从公网访问。">
+      <?= csrf_field() ?>
+      <input type="hidden" name="site_id" value="<?= (int)$site['id'] ?>">
+      <input type="hidden" name="quick" value="1">
+      <div class="card__body">
+        <div class="field">
+          <label>通知邮箱（可选）</label>
+          <input class="input" type="email" name="email" placeholder="留空则使用 admin@域名">
+          <span class="hint">Let's Encrypt 使用 HTTP-01 验证；申请成功后自动保存证书、测试配置并启用 HTTPS。</span>
+        </div>
+      </div>
+      <div class="card__foot" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span class="hint">当前域名：<span class="mono"><?= e($site['domain'] ?: '未绑定') ?></span></span>
+        <button class="btn btn--primary btn--sm" type="submit" <?= trim((string)$site['domain']) === '' ? 'disabled' : '' ?>>申请并启用</button>
+      </div>
+    </form>
+  </article>
+</section>
 
 <?php if ($databases): ?>
 <section class="card mt-18">
@@ -176,8 +265,34 @@ declare(strict_types=1);
   </article>
 </section>
 
-<?php if ($certs): ?>
 <section class="card mt-18">
+  <div class="card__head">
+    <span class="card__title"><?= icon('edit', 17) ?>站点自定义配置</span>
+    <span class="badge badge--warn">写入后自动 nginx -t 校验</span>
+  </div>
+  <form method="post" action="<?= url('/sites/' . (int)$site['id'] . '/extra') ?>">
+    <?= csrf_field() ?>
+    <div class="card__body">
+      <div class="field">
+        <textarea class="input mono" name="extra" rows="8" spellcheck="false" placeholder="# 只写 server 块内的指令，例如：
+add_header X-Frame-Options SAMEORIGIN always;
+location /static/ {
+    expires 7d;
+}"><?= e($extra_conf) ?></textarea>
+        <span class="hint">
+          这段内容会被 include 进本站点的每个 server 块，可直接写 <code class="mono">location</code> / <code class="mono">add_header</code> / <code class="mono">rewrite</code> 等指令。
+          保存失败会自动回滚，留空表示清空。文件：<span class="mono"><?= e($extra_path) ?></span>
+        </span>
+      </div>
+    </div>
+    <div class="card__foot" style="display:flex;justify-content:space-between;align-items:center">
+      <span class="hint">重新保存站点常规配置不会覆盖这里的内容。</span>
+      <button class="btn btn--primary btn--sm" type="submit"><?= icon('save', 14) ?>保存自定义配置</button>
+    </div>
+  </form>
+</section>
+
+<?php if ($certs): ?><section class="card mt-18">
   <div class="card__head"><span class="card__title"><?= icon('lock', 17) ?>当前证书</span></div>
   <div class="card__body card__body--flush">
     <div class="table-wrap">
@@ -189,7 +304,7 @@ declare(strict_types=1);
             <td class="cell-main mono"><?= e($cert['domain']) ?></td>
             <td class="small"><?= e($cert['issuer'] ?: '—') ?></td>
             <td class="small"><?= e($cert['not_after'] ? date('Y-m-d', strtotime($cert['not_after'])) : '—') ?></td>
-            <td><span class="badge badge--muted"><?= $cert['source'] === 'self' ? '自签名' : '导入' ?></span></td>
+            <td><span class="badge badge--muted"><?= $cert['source'] === 'self' ? '自签名' : ($cert['source'] === 'letsencrypt' ? "Let's Encrypt" : '导入') ?></span></td>
           </tr>
         <?php endforeach; ?>
         </tbody>

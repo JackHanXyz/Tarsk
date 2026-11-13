@@ -53,10 +53,11 @@ function task_label(array $task): string
 /**
  * 执行任务，返回 ['ok'=>bool,'message'=>string]
  */
-function task_execute(array $task): array
+function task_execute(array $task, string $trigger = 'schedule'): array
 {
     $type = (string)($task['type'] ?? 'command');
     $payload = task_payload($task);
+    $startedAt = microtime(true);
 
     switch ($type) {
         case 'site_backup':
@@ -101,6 +102,7 @@ function task_execute(array $task): array
                 'message' => $res['code'] === 0
                     ? '执行成功' . (trim($res['output']) !== '' ? '：' . mb_substr(trim($res['output']), 0, 180) : '')
                     : ('执行失败：' . mb_substr($res['error'] ?: $res['output'], 0, 180)),
+                'output' => trim(($res['output'] ?? '') . "\n" . ($res['error'] ?? '')),
             ];
             break;
     }
@@ -108,7 +110,212 @@ function task_execute(array $task): array
     $line = '[' . now() . '] #' . (int)$task['id'] . ' ' . $task['name'] . ' => ' . ($result['ok'] ? 'OK' : 'FAIL') . ' ' . $result['message'];
     @file_put_contents(storage_path('logs/task.log'), $line . "\n", FILE_APPEND);
 
+    cron_history_write((int)($task['id'] ?? 0), $result, (int)round((microtime(true) - $startedAt) * 1000), $trigger);
+
     return $result;
+}
+
+/* --------------------------- 执行历史 --------------------------- */
+
+function cron_history_write(int $taskId, array $result, int $durationMs, string $trigger = 'schedule'): void
+{
+    if ($taskId <= 0) {
+        return;
+    }
+    try {
+        execute(
+            'INSERT INTO ' . t('cron_logs') . ' (task_id, started_at, duration_ms, ok, trigger_by, message, output) VALUES (?,?,?,?,?,?,?)',
+            [
+                $taskId,
+                now(),
+                max(0, $durationMs),
+                !empty($result['ok']) ? 1 : 0,
+                in_array($trigger, ['schedule', 'manual'], true) ? $trigger : 'schedule',
+                mb_substr((string)($result['message'] ?? ''), 0, 500),
+                mb_substr((string)($result['output'] ?? ''), 0, 20000),
+            ]
+        );
+        // 每个任务只保留最近 200 条
+        $keepFrom = fetch_one(
+            'SELECT id FROM ' . t('cron_logs') . ' WHERE task_id = ? ORDER BY id DESC LIMIT 1 OFFSET 199',
+            [$taskId]
+        );
+        if ($keepFrom) {
+            execute('DELETE FROM ' . t('cron_logs') . ' WHERE task_id = ? AND id < ?', [$taskId, (int)$keepFrom['id']]);
+        }
+    } catch (Throwable $e) {
+        // 记录失败不影响任务本身
+    }
+}
+
+/* --------------------------- 自定义 cron 表达式 --------------------------- */
+
+/**
+ * 支持 5 段式表达式，以及 @hourly / @daily / @weekly / @monthly / @reboot 预设
+ */
+function cron_expr_normalize(string $expr): string
+{
+    $expr = trim(preg_replace('/\s+/', ' ', $expr) ?? '');
+    $presets = [
+        '@yearly' => '0 0 1 1 *',
+        '@annually' => '0 0 1 1 *',
+        '@monthly' => '0 0 1 * *',
+        '@weekly' => '0 0 * * 0',
+        '@daily' => '0 0 * * *',
+        '@midnight' => '0 0 * * *',
+        '@hourly' => '0 * * * *',
+        '@reboot' => '@reboot',
+    ];
+    $lower = strtolower($expr);
+    if (isset($presets[$lower])) {
+        return $presets[$lower];
+    }
+    return $expr;
+}
+
+function cron_expr_is_reboot(string $expr): bool
+{
+    return strtolower(cron_expr_normalize($expr)) === '@reboot';
+}
+
+/**
+ * 校验 5 段式表达式，返回错误信息（空串表示合法）
+ */
+function cron_expr_error(string $expr): string
+{
+    $normalized = cron_expr_normalize($expr);
+    if ($normalized === '') {
+        return '表达式不能为空';
+    }
+    if ($normalized === '@reboot') {
+        return '';
+    }
+    $fields = explode(' ', $normalized);
+    if (count($fields) !== 5) {
+        return '需要 5 段（分 时 日 月 周），当前 ' . count($fields) . ' 段';
+    }
+    $limits = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+    $names = ['分钟', '小时', '日', '月', '星期'];
+    foreach ($fields as $i => $field) {
+        $error = cron_field_error($field, $limits[$i][0], $limits[$i][1]);
+        if ($error !== '') {
+            return $names[$i] . '字段' . $error;
+        }
+    }
+    return '';
+}
+
+function cron_field_error(string $field, int $min, int $max): string
+{
+    if ($field === '' ) {
+        return '不能为空';
+    }
+    foreach (explode(',', $field) as $part) {
+        if ($part === '') {
+            return '存在空的枚举项';
+        }
+        $step = 1;
+        if (strpos($part, '/') !== false) {
+            [$part, $stepStr] = array_pad(explode('/', $part, 2), 2, '1');
+            if (!ctype_digit($stepStr) || (int)$stepStr < 1) {
+                return '步长不合法（' . $stepStr . '）';
+            }
+            $step = (int)$stepStr;
+        }
+        if ($part === '*') {
+            continue;
+        }
+        if (strpos($part, '-') !== false) {
+            [$from, $to] = array_pad(explode('-', $part, 2), 2, '');
+            if (!ctype_digit($from) || !ctype_digit($to)) {
+                return '区间不合法（' . $part . '）';
+            }
+            if ((int)$from < $min || (int)$to > $max || (int)$from > (int)$to) {
+                return '区间超出范围 ' . $min . '-' . $max . '（' . $part . '）';
+            }
+            continue;
+        }
+        if (!ctype_digit($part)) {
+            return '取值不合法（' . $part . '）';
+        }
+        if ((int)$part < $min || (int)$part > $max) {
+            return '超出范围 ' . $min . '-' . $max . '（' . $part . '）';
+        }
+    }
+    return '';
+}
+
+function cron_field_match(string $field, int $value, int $min, int $max): bool
+{
+    if ($field === '*' || $field === '') {
+        return true;
+    }
+    foreach (explode(',', $field) as $part) {
+        $step = 1;
+        if (strpos($part, '/') !== false) {
+            [$part, $stepStr] = array_pad(explode('/', $part, 2), 2, '1');
+            $step = max(1, (int)$stepStr);
+        }
+        if ($part === '*') {
+            $from = $min;
+            $to = $max;
+        } elseif (strpos($part, '-') !== false) {
+            [$fromStr, $toStr] = array_pad(explode('-', $part, 2), 2, '');
+            $from = (int)$fromStr;
+            $to = (int)$toStr;
+        } elseif (ctype_digit($part)) {
+            $from = (int)$part;
+            $to = $step > 1 ? $max : $from;
+        } else {
+            continue;
+        }
+        if ($value < $from || $value > $to) {
+            continue;
+        }
+        if ($step > 1 && ($value - $from) % $step !== 0) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 判断表达式在给定时间点是否应当触发
+ */
+function cron_expr_matches(string $expr, ?int $ts = null): bool
+{
+    $normalized = cron_expr_normalize($expr);
+    if ($normalized === '' || $normalized === '@reboot') {
+        return false;
+    }
+    $fields = explode(' ', $normalized);
+    if (count($fields) !== 5) {
+        return false;
+    }
+    $ts = $ts ?? time();
+    $dow = (int)date('w', $ts);
+    $domRestricted = !in_array($fields[2], ['*', ''], true);
+    $dowRestricted = !in_array($fields[4], ['*', ''], true);
+
+    if ($domRestricted && $dowRestricted) {
+        // 日与周同时限定时，标准 cron 取"或"关系
+        $dayOk = cron_field_match($fields[2], (int)date('j', $ts), 1, 31)
+            || cron_field_match($fields[4], $dow, 0, 7)
+            || ($dow === 0 && cron_field_match($fields[4], 7, 0, 7));
+    } elseif ($domRestricted) {
+        $dayOk = cron_field_match($fields[2], (int)date('j', $ts), 1, 31);
+    } elseif ($dowRestricted) {
+        $dayOk = cron_field_match($fields[4], $dow, 0, 7)
+            || ($dow === 0 && cron_field_match($fields[4], 7, 0, 7));
+    } else {
+        $dayOk = true;
+    }
+
+    return cron_field_match($fields[0], (int)date('i', $ts), 0, 59)
+        && cron_field_match($fields[1], (int)date('G', $ts), 0, 23)
+        && $dayOk
+        && cron_field_match($fields[3], (int)date('n', $ts), 1, 12);
 }
 
 /**
@@ -250,7 +457,7 @@ function task_site_check(int $siteId = 0): array
 
     if ($failures) {
         $message = '以下站点巡检失败：' . implode('；', $failures);
-        $notify = notify('站点巡检失败', $message, 'danger');
+        $notify = notify('站点巡检失败', $message, 'danger', ['kind' => 'site']);
         return [
             'ok' => false,
             'message' => $message . ($notify ? '（已发送通知）' : ''),

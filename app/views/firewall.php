@@ -24,7 +24,7 @@ declare(strict_types=1);
     <?php if (!$status['supported']): ?>
       <div class="alert alert--warning" style="margin:0">
         <?= icon('alert', 16) ?>
-        <span>未能读取系统防火墙配置。Windows 下请确认 PowerShell 可用；Linux 下请确认已安装 ufw。写入规则通常需要管理员权限。</span>
+            <span><?= e($status['error'] ?: '未能读取系统防火墙配置。Windows 需 PowerShell 权限；Linux 支持 UFW 或 firewalld。写入规则通常需要管理员权限。') ?></span>
       </div>
     <?php else: ?>
       <div class="grid grid--3" style="gap:12px">
@@ -38,6 +38,7 @@ declare(strict_types=1);
           </div>
         <?php endforeach; ?>
       </div>
+      <?php if (!empty($status['error'])): ?><p class="hint mt-12"><?= e($status['error']) ?></p><?php endif; ?>
     <?php endif; ?>
   </div>
 </div>
@@ -91,7 +92,7 @@ declare(strict_types=1);
     <?php endif; ?>
   </div>
   <div class="card__foot">
-    <span class="small muted">新增规则会调用 New-NetFirewallRule（Windows）或 ufw（Linux），失败原因会保存在列表中。</span>
+    <span class="small muted">当前后端：<?= e($status['backend'] ?: '未检测到') ?>。Linux 支持 UFW 的入/出站与 firewalld 入站规则；失败会回滚本次部分写入。Tarsk 不会自动启用防火墙。</span>
   </div>
 </div>
 
@@ -134,8 +135,9 @@ declare(strict_types=1);
           <input class="input" type="text" name="port" placeholder="8888 或 80,443 或 8000-9000">
         </div>
         <div class="field span-2">
-          <label>来源 IP</label>
+          <label>远端 IP</label>
           <input class="input" type="text" name="remote_ip" value="any" placeholder="any 或 192.168.1.0/24">
+          <span class="hint">入站规则表示来源地址，出站规则表示目标地址。必须填写端口，避免意外影响全部流量。</span>
         </div>
       </div>
     </div>

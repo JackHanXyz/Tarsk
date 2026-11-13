@@ -16,8 +16,8 @@ return [
     'app' => [
         'name' => 'Tarsk',
         'base_url' => '',
-        'debug' => true,
-        'version' => '1.3.0',
+        'debug' => false,
+        'version' => '1.8.3',
         'timezone' => 'Asia/Shanghai',
     ],
     'system' => [

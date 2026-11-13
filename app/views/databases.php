@@ -8,6 +8,12 @@ foreach ($databases as $db) {
         break;
     }
 }
+$dbTabs = [
+    ['key' => 'list', 'label' => '数据库', 'url' => '/databases', 'icon' => 'database'],
+    ['key' => 'users', 'label' => '用户与权限', 'url' => '/databases/users', 'icon' => 'user'],
+    ['key' => 'slow', 'label' => '慢查询报表', 'url' => '/databases/slow', 'icon' => 'activity'],
+    ['key' => 'replication', 'label' => '主从与同步', 'url' => '/databases/replication', 'icon' => 'network'],
+];
 ?>
 <div class="section-head">
   <div>
@@ -17,6 +23,12 @@ foreach ($databases as $db) {
   <div class="toolbar">
     <button class="btn btn--primary btn--sm" data-open="dbCreate"><?= icon('plus', 14) ?>新建数据库</button>
   </div>
+</div>
+
+<div class="toolbar" style="margin-bottom:14px;flex-wrap:wrap">
+  <?php foreach ($dbTabs as $tab): ?>
+    <a class="btn btn--sm <?= $tab['key'] === 'list' ? 'btn--primary' : 'btn--ghost' ?>" href="<?= url($tab['url']) ?>"><?= icon($tab['icon'], 14) ?><?= e($tab['label']) ?></a>
+  <?php endforeach; ?>
 </div>
 
 <?php if (!$info['connected']): ?>
@@ -131,6 +143,38 @@ foreach ($databases as $db) {
       <?php endif; ?>
     </div>
   </article>
+</section>
+
+<section class="card mt-18">
+  <div class="card__head">
+    <span class="card__title"><?= icon('upload', 17) ?>导入 SQL 文件</span>
+    <span class="badge badge--muted">上限 <?= e(ini_get('upload_max_filesize')) ?></span>
+  </div>
+  <form method="post" action="<?= url('/databases/import') ?>" enctype="multipart/form-data" data-busy="正在导入，请勿关闭页面…">
+    <?= csrf_field() ?>
+    <div class="card__body">
+      <div class="form-grid">
+        <div class="field">
+          <label>目标数据库</label>
+          <select class="input" name="db" required>
+            <option value="">请选择数据库</option>
+            <?php foreach ($databases as $db): ?>
+              <option value="<?= e($db['name']) ?>" <?= $selected === $db['name'] ? 'selected' : '' ?>><?= e($db['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="field">
+          <label>SQL 文件</label>
+          <input class="input" type="file" name="sql" accept=".sql,.txt" required>
+          <span class="hint">优先调用 mysql 客户端导入（支持 DELIMITER / 存储过程），无客户端时回落到逐语句执行。</span>
+        </div>
+      </div>
+      <p class="hint mt-12">导入前建议先备份目标库。大文件请先在 PHP 配置中调大 upload_max_filesize 与 post_max_size。</p>
+    </div>
+    <div class="card__foot" style="display:flex;justify-content:flex-end">
+      <button class="btn btn--primary btn--sm" type="submit"><?= icon('upload', 14) ?>开始导入</button>
+    </div>
+  </form>
 </section>
 
 <section class="card mt-18">

@@ -12,7 +12,7 @@ $sampleCount = count($series);
     <p>采集真实 CPU、内存、磁盘与网络指标，每 30 秒记录一次采样。</p>
   </div>
   <div class="toolbar">
-    <span class="chip chip--ok"><i></i>实时采集中</span>
+    <span class="chip chip--ok" id="monitorStatusChip"><i></i><span id="monitorStatus" aria-live="polite">正在连接监控数据…</span></span>
     <a class="btn btn--ghost btn--sm" href="<?= url('/monitor') ?>"><?= icon('refresh', 14) ?>刷新数据</a>
   </div>
 </div>
@@ -21,16 +21,18 @@ $sampleCount = count($series);
   <article class="stat">
     <div class="stat__head"><span class="stat__label"><span class="stat__icon"><?= icon('cpu', 16) ?></span>CPU</span><span class="badge badge--muted" id="monCpuTick"><?= e($metrics['time'] ?? '') ?></span></div>
     <div class="stat__value" id="monCpu"><?= number_format($cpu, 1) ?><small>%</small></div>
-    <div class="stat__meta"><span>系统负载</span><span><?= number_format((float)($metrics['load1'] ?? 0), 2) ?></span></div>
+    <div class="stat__meta"><span>1 / 5 / 15 分钟负载</span><span><b id="monLoad1"><?= number_format((float)($metrics['load1'] ?? 0), 2) ?></b> / <span id="monLoad5"><?= number_format((float)($metrics['load5'] ?? 0), 2) ?></span> / <span id="monLoad15"><?= number_format((float)($metrics['load15'] ?? 0), 2) ?></span></span></div>
+    <div class="stat__meta"><span>CPU 核心</span><span id="monCpuCores"><?= (int)($metrics['cpu_cores'] ?? 0) ?: '—' ?></span></div>
   </article>
   <article class="stat">
-    <div class="stat__head"><span class="stat__label"><span class="stat__icon stat__icon--violet"><?= icon('memory', 16) ?></span>内存</span><span class="badge badge--muted"><?= number_format($memPct, 1) ?>%</span></div>
+    <div class="stat__head"><span class="stat__label"><span class="stat__icon stat__icon--violet"><?= icon('memory', 16) ?></span>内存</span><span class="badge badge--muted" id="monMemPct"><?= number_format($memPct, 1) ?>%</span></div>
     <div class="stat__value" id="monMem"><?= bytes($metrics['mem_used'] ?? 0) ?></div>
     <div class="stat__meta"><span>总内存</span><span><?= bytes($metrics['mem_total'] ?? 0) ?></span></div>
     <div class="bar"><div class="bar__fill" id="monMemBar" style="width:<?= number_format($memPct, 1) ?>%"></div></div>
+    <div class="stat__meta"><span>Swap 已用 / 总量</span><span id="monSwap"><?= bytes($metrics['swap_used'] ?? 0) ?> / <?= bytes($metrics['swap_total'] ?? 0) ?></span></div>
   </article>
   <article class="stat">
-    <div class="stat__head"><span class="stat__label"><span class="stat__icon stat__icon--ok"><?= icon('disk', 16) ?></span>磁盘</span><span class="badge badge--muted"><?= number_format($diskPct, 1) ?>%</span></div>
+    <div class="stat__head"><span class="stat__label"><span class="stat__icon stat__icon--ok"><?= icon('disk', 16) ?></span>磁盘</span><span class="badge badge--muted" id="monDiskPct"><?= number_format($diskPct, 1) ?>%</span></div>
     <div class="stat__value" id="monDisk"><?= bytes($metrics['disk_used'] ?? 0) ?></div>
     <div class="stat__meta"><span>总容量</span><span><?= bytes($metrics['disk_total'] ?? 0) ?></span></div>
     <div class="bar"><div class="bar__fill bar__fill--ok" id="monDiskBar" style="width:<?= number_format($diskPct, 1) ?>%"></div></div>
@@ -40,6 +42,20 @@ $sampleCount = count($series);
     <div class="stat__value" style="font-size:20px"><?= e(uptime_text((int)($metrics['uptime'] ?? 0))) ?></div>
     <div class="stat__meta"><span>主机</span><span><?= e($metrics['hostname'] ?? '') ?></span></div>
   </article>
+</section>
+
+<section class="card mt-18">
+  <div class="card__head">
+    <span class="card__title"><?= icon('activity', 17) ?>网络流量</span>
+    <span class="badge badge--muted">接收 <strong id="monNetDown">—</strong> · 发送 <strong id="monNetUp">—</strong></span>
+  </div>
+  <div class="card__body" id="monNetInterfaces">
+    <?php if (empty($metrics['net_interfaces'])): ?>
+      <div class="service-row"><span class="muted">暂未读取到网卡明细；总计 RX <?= bytes($metrics['net_rx'] ?? 0) ?> · TX <?= bytes($metrics['net_tx'] ?? 0) ?></span></div>
+    <?php else: foreach ($metrics['net_interfaces'] as $iface): ?>
+      <div class="service-row"><div class="svc"><span class="dot dot--ok"></span><strong class="mono"><?= e($iface['name']) ?></strong></div><span class="small muted">RX <?= bytes($iface['rx']) ?> · TX <?= bytes($iface['tx']) ?></span></div>
+    <?php endforeach; endif; ?>
+  </div>
 </section>
 
 <section class="card mt-18">
@@ -105,6 +121,6 @@ $sampleCount = count($series);
 </section>
 
 <script>
-window.TARSK_MONITOR = <?= json_encode(['series' => $series], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+window.TARSK_MONITOR = <?= json_encode(['series' => $series, 'interfaces' => $metrics['net_interfaces'] ?? []], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 window.TARSK_REFRESH_INTERVAL = <?= (int)setting('refresh_interval', 3) ?>;
 </script>

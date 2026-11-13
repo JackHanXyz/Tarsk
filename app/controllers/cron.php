@@ -9,9 +9,10 @@ function cron_page(): void
     $tasks = fetch_all('SELECT * FROM ' . t('cron') . ' ORDER BY id DESC');
     foreach ($tasks as &$task) {
         $task['system_state'] = cron_system_state((int)$task['id']);
-        $task['schedule_text'] = cron_schedule_text($task['schedule'], $task['run_time']);
+        $task['schedule_text'] = cron_schedule_text($task['schedule'], $task['run_time'], (string)($task['cron_expr'] ?? ''));
         $task['type_label'] = task_label($task);
         $task['target_text'] = cron_target_text($task);
+        $task['history_count'] = (int)(fetch_one('SELECT COUNT(*) AS n FROM ' . t('cron_logs') . ' WHERE task_id = ?', [$task['id']])['n'] ?? 0);
     }
     unset($task);
 
@@ -56,12 +57,13 @@ function cron_create(): void
     $name = trim((string)($_POST['name'] ?? ''));
     $schedule = (string)($_POST['schedule'] ?? 'daily');
     $runTime = trim((string)($_POST['run_time'] ?? '03:00'));
+    $cronExpr = trim((string)($_POST['cron_expr'] ?? ''));
     $type = (string)($_POST['type'] ?? 'command');
     $command = trim((string)($_POST['command'] ?? ''));
     $siteId = (int)($_POST['site_id'] ?? 0);
     $dbName = trim((string)($_POST['db_name'] ?? ''));
 
-    $allowed = ['every_minute', 'every_5_minutes', 'hourly', 'daily', 'weekly', 'boot'];
+    $allowed = ['every_minute', 'every_5_minutes', 'hourly', 'daily', 'weekly', 'boot', 'custom'];
     if (!in_array($schedule, $allowed, true)) {
         $schedule = 'daily';
     }
@@ -71,6 +73,16 @@ function cron_create(): void
     }
     if (!preg_match('/^[0-9]{1,2}:[0-9]{2}$/', $runTime)) {
         $runTime = '03:00';
+    }
+    if ($schedule === 'custom') {
+        $cronExpr = cron_expr_normalize($cronExpr);
+        $error = cron_expr_error($cronExpr);
+        if ($error !== '') {
+            flash('error', '自定义 cron 表达式不合法：' . $error);
+            redirect('/cron');
+        }
+    } else {
+        $cronExpr = '';
     }
     if (!array_key_exists($type, task_types())) {
         $type = 'command';
@@ -102,8 +114,8 @@ function cron_create(): void
     }
 
     execute(
-        'INSERT INTO ' . t('cron') . ' (name, type, payload, schedule, run_time, command, status, created_at) VALUES (?,?,?,?,?,?,?,?)',
-        [$name, $type, json_encode($payload, JSON_UNESCAPED_UNICODE), $schedule, $runTime, $command !== '' ? $command : '-', 'enabled', now()]
+        'INSERT INTO ' . t('cron') . ' (name, type, payload, schedule, run_time, cron_expr, command, status, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        [$name, $type, json_encode($payload, JSON_UNESCAPED_UNICODE), $schedule, $runTime, $cronExpr, $command !== '' ? $command : '-', 'enabled', now()]
     );
     $task = fetch_one('SELECT * FROM ' . t('cron') . ' ORDER BY id DESC LIMIT 1');
     $trigger = task_command($task);
@@ -115,7 +127,7 @@ function cron_create(): void
         'UPDATE ' . t('cron') . ' SET last_result = ? WHERE id = ?',
         [mb_substr($result['message'], 0, 255), $task['id']]
     );
-    log_action('创建计划任务', $name . ' · ' . task_label($task) . ' · ' . cron_schedule_text($schedule, $runTime));
+    log_action('创建计划任务', $name . ' · ' . task_label($task) . ' · ' . cron_schedule_text($schedule, $runTime, $cronExpr));
     flash($result['ok'] ? 'success' : 'warning', $result['message']);
     redirect('/cron');
 }
@@ -156,17 +168,18 @@ function cron_run(int $id): void
     $type = (string)($task['type'] ?? 'command');
     if ($type !== 'command') {
         // 结构化任务（备份/切割/续期）直接同步执行，结果即时可见
-        $result = task_execute($task);
+        $result = task_execute($task, 'manual');
         $ok = $result['ok'];
         $message = $result['message'];
     } elseif (PHP_OS_FAMILY === 'Windows') {
         $res = run_cmd('schtasks /Run /TN ' . escapeshellarg(cron_task_name($id)), 20);
         $ok = $res['code'] === 0;
-        $message = $ok ? '已触发系统任务' : ('触发失败：' . ($res['error'] ?: '请以管理员身份运行'));
+        $message = $ok ? '已触发系统任务，执行结果稍后可在「历史」中查看' : ('触发失败：' . ($res['error'] ?: '请以管理员身份运行'));
     } else {
         $res = run_cmd('bash -lc ' . escapeshellarg((string)$task['command']), 60);
         $ok = $res['ok'];
         $message = $ok ? '命令已执行' : ('执行失败：' . $res['error']);
+        cron_history_write($id, ['ok' => $ok, 'message' => $message, 'output' => trim(($res['output'] ?? '') . "\n" . ($res['error'] ?? ''))], 0, 'manual');
     }
 
     execute(
@@ -190,6 +203,7 @@ function cron_delete(int $id): void
         run_cmd('schtasks /Delete /TN ' . escapeshellarg(cron_task_name($id)) . ' /F', 20);
     }
     execute('DELETE FROM ' . t('cron') . ' WHERE id = ?', [$id]);
+    execute('DELETE FROM ' . t('cron_logs') . ' WHERE task_id = ?', [$id]);
     if (PHP_OS_FAMILY !== 'Windows') {
         cron_sync_linux();
     }
@@ -205,8 +219,12 @@ function cron_task_name(int $id): string
     return 'Tarsk_Task_' . $id;
 }
 
-function cron_schedule_text(string $schedule, string $runTime = ''): string
+function cron_schedule_text(string $schedule, string $runTime = '', string $expr = ''): string
 {
+    if ($schedule === 'custom') {
+        $expr = cron_expr_normalize($expr);
+        return '自定义 · ' . ($expr !== '' ? $expr : '未设置');
+    }
     return [
         'every_minute' => '每分钟',
         'every_5_minutes' => '每 5 分钟',
@@ -226,14 +244,22 @@ function cron_register(array $task): array
     }
 
     if (PHP_OS_FAMILY === 'Windows') {
-        $arguments = cron_windows_schedule_args((string)$task['schedule'], (string)$task['run_time']);
+        $arguments = cron_windows_schedule_args(
+            (string)$task['schedule'],
+            (string)$task['run_time'],
+            (string)($task['cron_expr'] ?? '')
+        );
         $trigger = 'cmd /c ' . $command;
         $cmd = 'schtasks /Create /TN ' . escapeshellarg(cron_task_name($id))
             . ' /TR ' . escapeshellarg($trigger)
             . ' ' . $arguments . ' /F';
         $res = run_cmd($cmd, 30);
         if ($res['code'] === 0) {
-            return ['ok' => true, 'message' => '已注册到 Windows 任务计划程序'];
+            $message = '已注册到 Windows 任务计划程序';
+            if ((string)$task['schedule'] === 'custom' && !cron_expr_is_reboot((string)$task['cron_expr'])) {
+                $message .= '（每分钟触发，由 Tarsk 按表达式判断是否执行）';
+            }
+            return ['ok' => true, 'message' => $message];
         }
         return ['ok' => false, 'message' => '注册失败：' . ($res['error'] ?: '请以管理员身份运行面板')];
     }
@@ -242,8 +268,15 @@ function cron_register(array $task): array
     return ['ok' => true, 'message' => '已同步到 crontab'];
 }
 
-function cron_windows_schedule_args(string $schedule, string $runTime): string
+function cron_windows_schedule_args(string $schedule, string $runTime, string $expr = ''): string
 {
+    if ($schedule === 'custom') {
+        if (cron_expr_is_reboot($expr)) {
+            return '/SC ONSTART';
+        }
+        // schtasks 不支持 5 段式：每分钟轮询，执行前由 Tarsk 判断是否到期
+        return '/SC MINUTE /MO 1';
+    }
     switch ($schedule) {
         case 'every_minute':
             return '/SC MINUTE /MO 1';
@@ -281,7 +314,7 @@ function cron_sync_linux(): void
     $tasks = fetch_all('SELECT * FROM ' . t('cron') . ' WHERE status = ?', ['enabled']);
     $lines = ['# Tarsk managed crontab - do not edit this block manually'];
     foreach ($tasks as $task) {
-        $expr = cron_linux_expression((string)$task['schedule'], (string)$task['run_time']);
+        $expr = cron_linux_expression((string)$task['schedule'], (string)$task['run_time'], (string)($task['cron_expr'] ?? ''));
         $lines[] = $expr . ' ' . str_replace("\n", ' ', (string)$task['command']) . ' # tarsk:' . $task['id'];
     }
     $file = storage_path('tmp/crontab_' . bin2hex(random_bytes(4)) . '.txt');
@@ -290,8 +323,12 @@ function cron_sync_linux(): void
     @unlink($file);
 }
 
-function cron_linux_expression(string $schedule, string $runTime): string
+function cron_linux_expression(string $schedule, string $runTime, string $expr = ''): string
 {
+    if ($schedule === 'custom') {
+        $normalized = cron_expr_normalize($expr);
+        return $normalized !== '' ? $normalized : '* * * * *';
+    }
     [$hour, $minute] = array_pad(explode(':', $runTime), 2, '0');
     return [
         'every_minute' => '* * * * *',
@@ -301,4 +338,51 @@ function cron_linux_expression(string $schedule, string $runTime): string
         'weekly' => (int)$minute . ' ' . (int)$hour . ' * * 0',
         'boot' => '@reboot',
     ][$schedule] ?? '* * * * *';
+}
+
+/* ---------------------------- 执行历史 ---------------------------- */
+
+function cron_history(int $id): void
+{
+    $task = fetch_one('SELECT * FROM ' . t('cron') . ' WHERE id = ?', [$id]);
+    if (!$task) {
+        flash('error', '任务不存在');
+        redirect('/cron');
+    }
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = 30;
+    $total = (int)(fetch_one('SELECT COUNT(*) AS n FROM ' . t('cron_logs') . ' WHERE task_id = ?', [$id])['n'] ?? 0);
+    $pages = max(1, (int)ceil($total / $perPage));
+    $page = min($page, $pages);
+    $rows = fetch_all(
+        'SELECT * FROM ' . t('cron_logs') . ' WHERE task_id = ? ORDER BY id DESC LIMIT ' . $perPage . ' OFFSET ' . (($page - 1) * $perPage),
+        [$id]
+    );
+
+    $summary = fetch_one(
+        'SELECT COUNT(*) AS total, SUM(ok) AS ok_count, AVG(duration_ms) AS avg_ms FROM ' . t('cron_logs') . ' WHERE task_id = ?',
+        [$id]
+    ) ?: [];
+
+    render('cron_history', [
+        'title' => '任务历史 · ' . $task['name'],
+        'active' => 'cron',
+        'task' => $task,
+        'rows' => $rows,
+        'total' => $total,
+        'page' => $page,
+        'pages' => $pages,
+        'summary' => $summary,
+        'schedule_text' => cron_schedule_text((string)$task['schedule'], (string)$task['run_time'], (string)($task['cron_expr'] ?? '')),
+        'type_label' => task_label($task),
+    ], 'app');
+}
+
+function cron_history_clear(): void
+{
+    $id = (int)($_POST['id'] ?? 0);
+    execute('DELETE FROM ' . t('cron_logs') . ' WHERE task_id = ?', [$id]);
+    log_action('清空任务历史', '任务 #' . $id, 'warning');
+    flash('success', '执行历史已清空');
+    redirect('/cron/' . $id . '/history');
 }

@@ -114,3 +114,35 @@ function logs_export(): void
     log_action('导出操作日志', '共 ' . count($rows) . ' 条');
     exit;
 }
+
+/**
+ * 访问日志分析报表：PV/UV、状态码、Top URL、来源、蜘蛛、按小时趋势
+ */
+function logs_analyze_page(): void
+{
+    $sources = log_sources();
+    $key = (string)($_GET['file'] ?? '');
+    $source = $key !== '' ? log_source_by_key($key) : ($sources[0] ?? null);
+
+    $range = (string)($_GET['range'] ?? 'all');
+    if (!in_array($range, ['all', '1h', '24h', '7d'], true)) {
+        $range = 'all';
+    }
+    $mb = (int)($_GET['mb'] ?? 8);
+    $mb = max(1, min(64, $mb));
+
+    $stats = null;
+    if ($source !== null) {
+        $stats = log_analyze($source['path'], $range, $mb * 1024 * 1024);
+    }
+
+    render('logs_analyze', [
+        'title' => '访问日志分析',
+        'active' => 'logs_analyze',
+        'sources' => $sources,
+        'source' => $source,
+        'range' => $range,
+        'mb' => $mb,
+        'stats' => $stats,
+    ], 'app');
+}
