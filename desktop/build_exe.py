@@ -10,7 +10,8 @@ PNG = os.path.join(HERE, "app-icon.png")
 ICO = os.path.join(HERE, "app-icon.ico")
 WORK = os.path.join(HERE, "build")
 DIST = os.path.join(HERE, "dist")
-NAME = "Tarsk控制台"
+NAME = "TarskControlCenter"
+ENTRY = "tarsk_panel_v2.py"
 
 
 def make_ico():
@@ -34,7 +35,12 @@ def make_assets():
 def build():
     asset_files = make_assets()
     data_args = []
-    for a in [ICO] + asset_files:
+    extras = [ICO] + asset_files
+    for name in ("tarsk-mascot.png", "tarsk-mascot.ico"):
+        path = os.path.join(HERE, name)
+        if os.path.exists(path):
+            extras.append(path)
+    for a in extras:
         data_args += ["--add-data", a + os.pathsep + "."]
     cmd = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
@@ -46,7 +52,7 @@ def build():
         "--exclude-module", "numpy", "--exclude-module", "matplotlib",
         "--exclude-module", "PIL", "--exclude-module", "scipy",
         "--exclude-module", "pandas", "--exclude-module", "pytest",
-        os.path.join(HERE, "tarsk_console.py"),
+        os.path.join(HERE, ENTRY),
     ]
     rc = subprocess.call(cmd, cwd=HERE)
     exe = os.path.join(DIST, NAME + ".exe")

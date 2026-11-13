@@ -10,4 +10,5 @@ desktop/dist/
 desktop/build/
 desktop/__pycache__/
 outputs/*.exe
+outputs/archive/
 *.bak.*
